@@ -1,42 +1,107 @@
 {
-  "hello": {
-    "type": "hello", "id": "hello-1", "versions": [1],
-    "instanceKey": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-    "workspace": "/work/project", "capabilities": ["snapshot", "output", "approvals", "receipts"], "maxFrameBytes": 1048576
-  },
-  "helloMissingCapabilities": {
-    "type": "hello", "id": "hello-2", "versions": [1],
-    "instanceKey": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-    "workspace": "/work/project", "capabilities": ["snapshot", "output", "approvals"], "maxFrameBytes": 1048576
-  },
-  "helloAccepted": { "type": "reply", "id": "hello-1", "ok": true, "data": { "version": 1, "instanceKey": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "workspace": "/work/project", "epoch": "epoch-1", "capabilities": ["snapshot", "output", "approvals", "receipts"], "maxFrameBytes": 1048576 } },
-  "helloRejected": { "type": "reply", "id": "hello-2", "ok": false, "error": { "code": "protocol_incompatible" } },
-  "acquire": { "type": "request", "id": "acquire-1", "op": "acquire", "data": {} },
-  "acquired": { "type": "reply", "id": "acquire-1", "ok": true, "data": { "lease": 1 } },
-  "sync": { "type": "request", "id": "sync-1", "op": "sync", "data": { "lease": 1 } },
-  "initializingSnapshot": {
-    "type": "reply", "id": "sync-1", "ok": true,
-    "data": {
-      "epoch": "epoch-1", "seq": 0, "view": "view-1", "sessionId": "session-1", "cwd": "/work/project",
-      "phase": "starting", "runId": null, "partialReply": null, "currentTools": [],
-      "pendingApprovals": [{ "requestId": "approval-1", "type": "confirm", "message": "Allow initialization?" }],
-      "historyCursor": null
-    }
-  },
-  "runningSnapshot": {
-    "type": "reply", "id": "sync-2", "ok": true,
-    "data": {
-      "epoch": "epoch-1", "seq": 10, "view": "view-2", "sessionId": "session-1", "cwd": "/work/project",
-      "phase": "running", "runId": "run-1", "partialReply": { "text": "Working" },
-      "currentTools": [{ "toolCallId": "tool-1", "name": "bash", "outputId": "output-1" }],
-      "pendingApprovals": [], "historyCursor": "history-1"
-    }
-  },
-  "delta": { "type": "event", "epoch": "epoch-1", "seq": 11, "sessionId": "session-1", "event": { "type": "text_delta", "delta": " on it" } },
-  "action": { "type": "request", "id": "action-1", "op": "action", "data": { "lease": 1, "epoch": "epoch-1", "sessionId": "session-1", "actionId": "action-1", "command": { "type": "prompt", "message": "Hello" } } },
-  "receipt": { "type": "request", "id": "receipt-1", "op": "receipt", "data": { "epoch": "epoch-1", "sessionId": "session-1", "actionId": "action-1" } },
-  "accepted": { "type": "reply", "id": "receipt-1", "ok": true, "data": { "status": "accepted" } },
-  "succeeded": { "type": "reply", "id": "receipt-1", "ok": true, "data": { "status": "succeeded", "data": null } },
-  "rejected": { "type": "reply", "id": "receipt-2", "ok": true, "data": { "status": "rejected", "error": { "code": "stale_lease" } } },
-  "unknown": { "type": "reply", "id": "receipt-3", "ok": true, "data": { "status": "unknown" } }
+	"hello": {
+		"type": "hello",
+		"id": "hello-1",
+		"versions": [1],
+		"instanceKey": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"workspace": "/work/project",
+		"capabilities": ["snapshot", "output", "approvals", "receipts"],
+		"maxFrameBytes": 1048576
+	},
+	"helloMissingCapabilities": {
+		"type": "hello",
+		"id": "hello-2",
+		"versions": [1],
+		"instanceKey": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"workspace": "/work/project",
+		"capabilities": ["snapshot", "output", "approvals"],
+		"maxFrameBytes": 1048576
+	},
+	"helloAccepted": {
+		"type": "reply",
+		"id": "hello-1",
+		"ok": true,
+		"data": {
+			"version": 1,
+			"instanceKey": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+			"workspace": "/work/project",
+			"epoch": "epoch-1",
+			"capabilities": ["snapshot", "output", "approvals", "receipts"],
+			"maxFrameBytes": 1048576
+		}
+	},
+	"helloRejected": { "type": "reply", "id": "hello-2", "ok": false, "error": { "code": "protocol_incompatible" } },
+	"acquire": { "type": "request", "id": "acquire-1", "op": "acquire", "data": {} },
+	"acquired": { "type": "reply", "id": "acquire-1", "ok": true, "data": { "lease": 1 } },
+	"sync": { "type": "request", "id": "sync-1", "op": "sync", "data": { "lease": 1 } },
+	"initializingSnapshot": {
+		"type": "reply",
+		"id": "sync-1",
+		"ok": true,
+		"data": {
+			"epoch": "epoch-1",
+			"seq": 0,
+			"view": "view-1",
+			"sessionId": "session-1",
+			"cwd": "/work/project",
+			"phase": "starting",
+			"runId": null,
+			"partialReply": null,
+			"currentTools": [],
+			"pendingApprovals": [{ "requestId": "approval-1", "type": "confirm", "message": "Allow initialization?" }],
+			"historyCursor": null
+		}
+	},
+	"runningSnapshot": {
+		"type": "reply",
+		"id": "sync-2",
+		"ok": true,
+		"data": {
+			"epoch": "epoch-1",
+			"seq": 10,
+			"view": "view-2",
+			"sessionId": "session-1",
+			"cwd": "/work/project",
+			"phase": "running",
+			"runId": "run-1",
+			"partialReply": { "text": "Working" },
+			"currentTools": [{ "toolCallId": "tool-1", "name": "bash", "outputId": "output-1" }],
+			"pendingApprovals": [],
+			"historyCursor": "history-1"
+		}
+	},
+	"delta": {
+		"type": "event",
+		"epoch": "epoch-1",
+		"seq": 11,
+		"sessionId": "session-1",
+		"event": { "type": "text_delta", "delta": " on it" }
+	},
+	"action": {
+		"type": "request",
+		"id": "action-1",
+		"op": "action",
+		"data": {
+			"lease": 1,
+			"epoch": "epoch-1",
+			"sessionId": "session-1",
+			"actionId": "action-1",
+			"command": { "type": "prompt", "message": "Hello" }
+		}
+	},
+	"receipt": {
+		"type": "request",
+		"id": "receipt-1",
+		"op": "receipt",
+		"data": { "epoch": "epoch-1", "sessionId": "session-1", "actionId": "action-1" }
+	},
+	"accepted": { "type": "reply", "id": "receipt-1", "ok": true, "data": { "status": "accepted" } },
+	"succeeded": { "type": "reply", "id": "receipt-1", "ok": true, "data": { "status": "succeeded", "data": null } },
+	"rejected": {
+		"type": "reply",
+		"id": "receipt-2",
+		"ok": true,
+		"data": { "status": "rejected", "error": { "code": "stale_lease" } }
+	},
+	"unknown": { "type": "reply", "id": "receipt-3", "ok": true, "data": { "status": "unknown" } }
 }
