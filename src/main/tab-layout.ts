@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import type { IpcTabWorktree, SessionKind } from "../shared/ipc-types";
+import type { IpcTabWorktree, RemoteTabTarget, SessionKind } from "../shared/ipc-types";
 
 export const TAB_LAYOUT_VERSION = 1;
 /** A persisted title is display data only — bound it so prefs cannot grow. */
@@ -10,6 +10,7 @@ export interface PersistedTabDescriptor {
 	sessionPath?: string;
 	kind: SessionKind;
 	worktree?: IpcTabWorktree;
+	remote?: RemoteTabTarget;
 	/** Untargeted startup tab, disposable once another real tab exists. */
 	placeholder?: boolean;
 	/**
@@ -101,6 +102,19 @@ function parseWorktree(value: unknown): IpcTabWorktree | undefined {
 	return name && branch && baseCwd ? { name, branch, baseCwd } : undefined;
 }
 
+function parseRemote(value: unknown): RemoteTabTarget | undefined {
+	if (!isRecord(value)) return undefined;
+	const profileId = nonEmptyString(value.profileId);
+	const target = nonEmptyString(value.target);
+	const instanceKey = nonEmptyString(value.instanceKey);
+	const workspace = nonEmptyString(value.workspace);
+	const sessionId = value.sessionId === undefined ? undefined : nonEmptyString(value.sessionId);
+	if (!profileId || !target || !instanceKey || !workspace || (value.sessionId !== undefined && !sessionId))
+		return undefined;
+	if (!/^[0-9a-f]{64}$/.test(instanceKey)) return undefined;
+	return { profileId, target, instanceKey, workspace, ...(sessionId ? { sessionId } : {}) };
+}
+
 /**
  * Validate the tab snapshot loaded from electron-store before it reaches a
  * sidecar. Missing workspaces are dropped; a deleted transcript becomes a
@@ -122,23 +136,28 @@ export function sanitizePersistedTabLayout(
 		if (!isRecord(candidate)) continue;
 		const cwd = nonEmptyString(candidate.cwd);
 		const kind = parseKind(candidate.kind);
-		if (!cwd || !kind || !paths.directoryExists(cwd)) continue;
+		// A malformed remote descriptor must never be reinterpreted as local.
+		const remote = candidate.remote === undefined ? undefined : parseRemote(candidate.remote);
+		if (!cwd || !kind || (candidate.remote !== undefined && !remote)) continue;
+		if (remote ? cwd !== remote.workspace : !paths.directoryExists(cwd)) continue;
 
-		const storedSessionPath = nonEmptyString(candidate.sessionPath);
+		const storedSessionPath = remote ? undefined : nonEmptyString(candidate.sessionPath);
 		const sessionPath = storedSessionPath && paths.fileExists(storedSessionPath) ? storedSessionPath : undefined;
 		if (sessionPath && sessionPaths.has(sessionPath)) continue;
 		if (sessionPath) sessionPaths.add(sessionPath);
 
 		const descriptor: PersistedTabDescriptor = { cwd, kind };
+		if (remote) descriptor.remote = remote;
 		if (sessionPath) descriptor.sessionPath = sessionPath;
-		const worktree = parseWorktree(candidate.worktree);
+		const worktree = remote ? undefined : parseWorktree(candidate.worktree);
 		if (worktree) descriptor.worktree = worktree;
 		const legacyEmptyStartupChat =
+			!remote &&
 			candidate.placeholder === undefined &&
 			sourceIndex === 0 &&
 			kind === "chat" &&
 			(!sessionPath || paths.sessionHasContent?.(sessionPath) === false);
-		if (candidate.placeholder === true || legacyEmptyStartupChat) descriptor.placeholder = true;
+		if (!remote && (candidate.placeholder === true || legacyEmptyStartupChat)) descriptor.placeholder = true;
 		const title = nonEmptyString(candidate.title);
 		if (title) descriptor.title = title.slice(0, MAX_PERSISTED_TITLE);
 		retained.push({ descriptor, sourceIndex });

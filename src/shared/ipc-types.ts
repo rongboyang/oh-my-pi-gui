@@ -1010,11 +1010,22 @@ export interface IpcTabWorktree {
 	baseCwd: string;
 }
 
+/** Immutable connection identity; sessionId is an opaque remote identifier. */
+export interface RemoteTabTarget {
+	readonly profileId: string;
+	readonly target: string;
+	readonly instanceKey: string;
+	readonly workspace: string;
+	readonly sessionId?: string;
+}
+
 /** One tab of a window: its sidecar's cwd, last status, and cached session meta. */
 export interface IpcTabInfo {
 	/** Opaque snowflake id minted by main at acquire. */
 	tabId: string;
 	cwd: string;
+	/** Remote origin, absent for local tabs. */
+	remote?: RemoteTabTarget;
 	status: TabStatus;
 	/** Present on GET_TABS for the tab main currently routes as active. */
 	active?: boolean;

@@ -79,6 +79,8 @@ export class SchedulerHost {
 	#badge = -1;
 	#disposed = false;
 	#notices: TaskNotice[];
+	/** Set by IPC registration before start; remote tabs cannot access local tasks. */
+	allowIpc: (event: Electron.IpcMainInvokeEvent, payload: unknown) => boolean = () => false;
 
 	constructor(deps: SchedulerHostDeps) {
 		this.#deps = deps;
@@ -315,70 +317,72 @@ export class SchedulerHost {
 
 	#registerIpc(): void {
 		const scheduler = this.scheduler;
-		ipcMain.handle(IPC_COMMANDS.SCHEDULER_GET_SNAPSHOT, () => scheduler.snapshot());
-		ipcMain.handle(IPC_COMMANDS.SCHEDULER_VALIDATE, (_event, payload: unknown) => {
+		const handle = (channel: string, handler: (event: Electron.IpcMainInvokeEvent, payload: unknown) => unknown) => {
+			ipcMain.handle(channel, (event, payload: unknown) => {
+				if (!this.allowIpc(event, payload)) throw new Error("Local scheduler is unavailable for this tab");
+				return handler(event, payload);
+			});
+		};
+		handle(IPC_COMMANDS.SCHEDULER_GET_SNAPSHOT, () => scheduler.snapshot());
+		handle(IPC_COMMANDS.SCHEDULER_VALIDATE, (_event, payload: unknown) => {
 			const draft = asTaskDraft(isRecord(payload) ? payload.draft : undefined);
 			if (!draft) throw new Error("Invalid task draft");
 			const editingId = isRecord(payload) && typeof payload.editingId === "string" ? payload.editingId : undefined;
 			return scheduler.validate(draft, editingId);
 		});
-		ipcMain.handle(IPC_COMMANDS.SCHEDULER_CREATE, (_event, payload: unknown) => {
+		handle(IPC_COMMANDS.SCHEDULER_CREATE, (_event, payload: unknown) => {
 			const draft = asTaskDraft(isRecord(payload) ? payload.draft : undefined);
 			if (!draft) throw new Error("Invalid task draft");
 			return scheduler.createTask(draft);
 		});
-		ipcMain.handle(IPC_COMMANDS.SCHEDULER_UPDATE, (_event, payload: unknown) => {
+		handle(IPC_COMMANDS.SCHEDULER_UPDATE, (_event, payload: unknown) => {
 			const config = asTaskConfig(isRecord(payload) ? payload.config : undefined);
 			if (!config) throw new Error("Invalid task settings");
 			return scheduler.updateTask(idOf(payload, "taskId"), config);
 		});
-		ipcMain.handle(IPC_COMMANDS.SCHEDULER_SET_ENABLED, (_event, payload: unknown) =>
+		handle(IPC_COMMANDS.SCHEDULER_SET_ENABLED, (_event, payload: unknown) =>
 			scheduler.setTaskEnabled(idOf(payload, "taskId"), isRecord(payload) && payload.enabled === true),
 		);
-		ipcMain.handle(IPC_COMMANDS.SCHEDULER_ARCHIVE, (_event, payload: unknown) =>
+		handle(IPC_COMMANDS.SCHEDULER_ARCHIVE, (_event, payload: unknown) =>
 			scheduler.archiveTask(idOf(payload, "taskId"), isRecord(payload) && payload.cancelLive === true),
 		);
-		ipcMain.handle(IPC_COMMANDS.SCHEDULER_DELETE, (_event, payload: unknown) =>
+		handle(IPC_COMMANDS.SCHEDULER_DELETE, (_event, payload: unknown) =>
 			scheduler.deleteTask(idOf(payload, "taskId")),
 		);
-		ipcMain.handle(IPC_COMMANDS.SCHEDULER_RUN_NOW, (_event, payload: unknown) =>
-			scheduler.runNow(idOf(payload, "taskId")),
-		);
-		ipcMain.handle(IPC_COMMANDS.SCHEDULER_CANCEL_RUN, (_event, payload: unknown) =>
+		handle(IPC_COMMANDS.SCHEDULER_RUN_NOW, (_event, payload: unknown) => scheduler.runNow(idOf(payload, "taskId")));
+		handle(IPC_COMMANDS.SCHEDULER_CANCEL_RUN, (_event, payload: unknown) =>
 			scheduler.cancelRun(idOf(payload, "runId")),
 		);
-		ipcMain.handle(IPC_COMMANDS.SCHEDULER_REVIEW, (_event, payload: unknown) => {
+		handle(IPC_COMMANDS.SCHEDULER_REVIEW, (_event, payload: unknown) => {
 			const decision = isRecord(payload) ? payload.decision : undefined;
 			if (decision !== "accepted" && decision !== "rejected") throw new Error("Invalid review decision");
 			const note = isRecord(payload) && typeof payload.note === "string" ? payload.note.slice(0, 2000) : undefined;
 			return scheduler.review(idOf(payload, "runId"), decision, note);
 		});
-		ipcMain.handle(IPC_COMMANDS.SCHEDULER_SET_PAUSED, (_event, payload: unknown) =>
+		handle(IPC_COMMANDS.SCHEDULER_SET_PAUSED, (_event, payload: unknown) =>
 			scheduler.setPaused(isRecord(payload) && payload.paused === true),
 		);
-		ipcMain.handle(IPC_COMMANDS.SCHEDULER_SET_LIMITS, (_event, payload: unknown) => {
+		handle(IPC_COMMANDS.SCHEDULER_SET_LIMITS, (_event, payload: unknown) => {
 			const patch = isRecord(payload) && isRecord(payload.patch) ? payload.patch : {};
 			const next: Partial<Pick<SchedulerLimits, "maxConcurrentRuns" | "retainDays">> = {};
 			if (typeof patch.maxConcurrentRuns === "number") next.maxConcurrentRuns = patch.maxConcurrentRuns;
 			if (typeof patch.retainDays === "number") next.retainDays = patch.retainDays;
 			scheduler.setLimits(next);
 		});
-		ipcMain.handle(IPC_COMMANDS.SCHEDULER_INSIGHTS, (_event, payload: unknown) => {
+		handle(IPC_COMMANDS.SCHEDULER_INSIGHTS, (_event, payload: unknown) => {
 			const days = isRecord(payload) && typeof payload.periodDays === "number" ? payload.periodDays : 30;
 			const taskId = isRecord(payload) && typeof payload.taskId === "string" ? payload.taskId : undefined;
 			return scheduler.insights(Math.min(365, Math.max(1, Math.round(days))), taskId);
 		});
-		ipcMain.handle(IPC_COMMANDS.SCHEDULER_GET_RUN, (_event, payload: unknown) =>
-			scheduler.getRun(idOf(payload, "runId")),
-		);
-		ipcMain.handle(IPC_COMMANDS.SCHEDULER_TASK_RUNS, (_event, payload: unknown): TaskRun[] =>
+		handle(IPC_COMMANDS.SCHEDULER_GET_RUN, (_event, payload: unknown) => scheduler.getRun(idOf(payload, "runId")));
+		handle(IPC_COMMANDS.SCHEDULER_TASK_RUNS, (_event, payload: unknown): TaskRun[] =>
 			scheduler.listTaskRuns(idOf(payload, "taskId")),
 		);
-		ipcMain.handle(IPC_COMMANDS.SCHEDULER_REVISIONS, (_event, payload: unknown) =>
+		handle(IPC_COMMANDS.SCHEDULER_REVISIONS, (_event, payload: unknown) =>
 			scheduler.listRevisions(idOf(payload, "taskId")),
 		);
-		ipcMain.handle(IPC_COMMANDS.SCHEDULER_GET_NOTICES, () => this.#notices);
-		ipcMain.handle(IPC_COMMANDS.SCHEDULER_MARK_NOTICES_READ, (_event, payload: unknown) => {
+		handle(IPC_COMMANDS.SCHEDULER_GET_NOTICES, () => this.#notices);
+		handle(IPC_COMMANDS.SCHEDULER_MARK_NOTICES_READ, (_event, payload: unknown) => {
 			const ids =
 				isRecord(payload) && Array.isArray(payload.ids)
 					? payload.ids.filter(id => typeof id === "string")

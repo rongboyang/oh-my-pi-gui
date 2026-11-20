@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 import type { BrowserWindow } from "electron";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { IPC_EVENTS, type IpcTabStatusPayload, type IpcTabWorktree } from "../shared/ipc-types";
 import type { RpcCommand, RpcResponse, SessionInfoUpdateFrame, SidecarStatus } from "../shared/rpc-types";
 import type { SidecarManager } from "./sidecar";
@@ -173,6 +173,73 @@ describe("SidecarPool session kind", () => {
 
 		// GET_TABS exposes the immutable kind for every tab.
 		expect(pool.tabsForWindow(fw.win).map(tab => tab.kind)).toEqual(["agent", "chat"]);
+	});
+});
+
+describe("SidecarPool remote tabs", () => {
+	it("attaches and activates a remote handle without creating or restarting a local sidecar", () => {
+		const { pool, sidecars } = fakePool();
+		const fw = fakeWindow(1);
+		const target = { profileId: "profile", target: "host", instanceKey: "instance", workspace: "/remote" };
+		const handle = { disconnect: vi.fn() };
+		const tabId = pool.acquireRemote(fw.win, target, handle);
+
+		expect(sidecars).toEqual([]);
+		expect(pool.activeTabForWindow(fw.win)).toBe(tabId);
+		expect(pool.remoteForWindow(fw.win)).toEqual({ target, handle });
+		expect(pool.remoteForTab(fw.win, tabId)).toEqual({ target, handle });
+		expect(pool.sidecarForWindow(fw.win)).toBeNull();
+		expect(pool.sidecarForTab(fw.win, tabId)).toBeNull();
+		expect(pool.setActiveTab(fw.win, tabId)).toBe(true);
+		expect(sidecars).toEqual([]);
+	});
+
+	it("scopes remote lookups to the owning window and active tab in a mixed pool", () => {
+		const { pool, sidecars } = fakePool();
+		const fw = fakeWindow(1);
+		const other = fakeWindow(2);
+		const target = { profileId: "profile", target: "host", instanceKey: "instance", workspace: "/remote" };
+		const handle = { disconnect: vi.fn() };
+		const local = pool.acquire("/local", fw.win, "local");
+		const tabId = pool.acquireRemote(fw.win, target, handle);
+
+		expect(sidecars).toHaveLength(1);
+		expect(sidecars[0]?.started).toBe(true);
+		expect(sidecars[0]?.restartArgs).toEqual([]);
+		expect(pool.remoteForWindow(fw.win)).toBeNull();
+		expect(pool.remoteForWindow(other.win)).toBeNull();
+		expect(pool.remoteForTab(fw.win, "local")).toBeNull();
+		expect(pool.remoteForTab(other.win, tabId)).toBeNull();
+		expect(pool.remoteForTab(fw.win, tabId)).toEqual({ target, handle });
+		expect(pool.setActiveTab(fw.win, tabId)).toBe(true);
+		expect(pool.remoteForWindow(fw.win)).toEqual({ target, handle });
+		expect(pool.sidecarForWindow(fw.win)).toBeNull();
+		expect(pool.sidecarForTab(fw.win, tabId)).toBeNull();
+		expect(pool.sidecarForTab(fw.win, "local")).toBe(local);
+		expect(sidecars).toHaveLength(1);
+		expect(sidecars[0]?.restartArgs).toEqual([]);
+	});
+
+	it("disconnects only the remote handle on release, without disposing the local sibling", () => {
+		const { pool, sidecars } = fakePool();
+		const fw = fakeWindow(1);
+		const target = { profileId: "profile", target: "host", instanceKey: "instance", workspace: "/remote" };
+		const handle = { disconnect: vi.fn(), kill: vi.fn(), dispose: vi.fn() };
+		pool.acquire("/local", fw.win, "local");
+		const tabId = pool.acquireRemote(fw.win, target, handle);
+		expect(pool.setActiveTab(fw.win, tabId)).toBe(true);
+
+		expect(pool.releaseTab(tabId)).toBe(true);
+		expect(handle.disconnect).toHaveBeenCalledTimes(1);
+		expect(handle.kill).not.toHaveBeenCalled();
+		expect(handle.dispose).not.toHaveBeenCalled();
+		expect(sidecars[0]?.disposed).toBe(false);
+		expect(pool.remoteForTab(fw.win, tabId)).toBeNull();
+		expect(pool.remoteForWindow(fw.win)).toBeNull();
+		expect(pool.sidecarForWindow(fw.win)).toBe(sidecars[0]);
+		expect(pool.releaseTab(tabId)).toBe(false);
+		fw.close();
+		expect(handle.disconnect).toHaveBeenCalledTimes(1);
 	});
 });
 

@@ -36,6 +36,7 @@ import {
 	type IpcTabRetry,
 	type IpcTabStatusPayload,
 	type IpcTabWorktree,
+	type RemoteTabTarget,
 } from "../shared/ipc-types";
 import {
 	type AgentMessage,
@@ -69,12 +70,23 @@ import { type PersistedTabDescriptor, type PersistedTabLayout, TAB_LAYOUT_VERSIO
 
 export type SidecarFactory = (cwd: string, kind: "agent" | "chat", fresh: boolean) => SidecarManager;
 
+/** A connection belongs to one tab; closing it never stops the remote instance. */
+export interface RemoteTabHandle {
+	disconnect(): void;
+}
+
+export interface RemoteTabBackend {
+	readonly target: RemoteTabTarget;
+	readonly handle: RemoteTabHandle | null;
+}
+
 function forwardToWindow(win: BrowserWindow, channel: string, data: unknown): void {
 	if (!win.isDestroyed()) win.webContents.send(channel, data);
 }
 
 interface PoolEntry {
-	sidecar: SidecarManager;
+	sidecar: SidecarManager | null;
+	remote?: { target: RemoteTabTarget; handle: RemoteTabHandle | null };
 	tabId: string;
 	win: BrowserWindow;
 	/** win.webContents.id, cached at acquire — safe to read after the window is destroyed. */
@@ -291,6 +303,79 @@ export class SidecarPool {
 		}
 	}
 
+	/** Attach an already-created remote connection without creating a local sidecar. */
+	acquireRemote(win: BrowserWindow, target: RemoteTabTarget, remote: RemoteTabHandle): string {
+		return this.#acquireRemote(win, target, remote);
+	}
+
+	#acquireRemote(
+		win: BrowserWindow,
+		target: RemoteTabTarget,
+		handle: RemoteTabHandle | null,
+		title?: string,
+		kind: "agent" | "chat" = "agent",
+	): string {
+		const tabId = nextSnowflake();
+		const entry: PoolEntry = {
+			sidecar: null,
+			remote: { target: Object.freeze({ ...target }), handle },
+			tabId,
+			win,
+			winId: win.webContents.id,
+			kind,
+			placeholder: false,
+			status: "asleep",
+			running: false,
+			awaitingSessionSettled: false,
+			sessionId: target.sessionId,
+			title,
+			detachFull: null,
+		};
+		this.#entries.add(entry);
+		this.#byTabId.set(tabId, entry);
+		if (!this.#activeByWindow.has(entry.winId)) {
+			this.#activeByWindow.set(entry.winId, tabId);
+			this.#visibleByWindow.set(entry.winId, new Set([tabId]));
+		}
+		win.once("closed", () => this.#releaseEntry(entry));
+		this.#notifyWindowTabsChanged(win);
+		return tabId;
+	}
+
+	/** Adopt authoritative connection and session state from the remote transport. */
+	adoptRemoteState(
+		win: BrowserWindow,
+		tabId: string,
+		state: {
+			status?: SidecarStatus;
+			sessionId?: string | null;
+			title?: string | null;
+			running?: boolean;
+		},
+	): boolean {
+		const entry = this.#byTabId.get(tabId);
+		if (!entry || entry.win !== win || !entry.remote) return false;
+		if (state.status !== undefined) entry.status = state.status;
+		if (state.running !== undefined) entry.running = state.running;
+		if (state.title !== undefined) entry.title = state.title;
+		if (state.sessionId !== undefined) {
+			entry.sessionId = state.sessionId ?? undefined;
+			const { sessionId: _old, ...target } = entry.remote.target;
+			entry.remote.target = Object.freeze({ ...target, ...(state.sessionId ? { sessionId: state.sessionId } : {}) });
+		}
+		forwardToWindow(win, IPC_EVENTS.TAB_STATUS, tabStatusPayload(entry));
+		this.#notifyWindowTabsChanged(win);
+		return true;
+	}
+
+	adoptRemoteHandle(win: BrowserWindow, tabId: string, handle: RemoteTabHandle): boolean {
+		const entry = this.#byTabId.get(tabId);
+		if (!entry || entry.win !== win || !entry.remote) return false;
+		if (entry.remote.handle !== handle) entry.remote.handle?.disconnect();
+		entry.remote.handle = handle;
+		return true;
+	}
+
 	/**
 	 * Spawn a tab's sidecar unless one is already under way or it has already
 	 * run. A fresh sidecar with a session to resume goes through restart():
@@ -304,6 +389,7 @@ export class SidecarPool {
 	 * attaches after this returns), so the swap re-wires that alone.
 	 */
 	#ensureStarted(entry: PoolEntry): void {
+		if (!entry.sidecar) return;
 		if (entry.sidecar.status !== "asleep") return;
 		const spare = this.#takeSpare(entry);
 		if (spare) {
@@ -322,6 +408,7 @@ export class SidecarPool {
 
 	/** The spare `entry` can adopt, removed from the pool; null when there is none. */
 	#takeSpare(entry: PoolEntry): SidecarManager | null {
+		if (!entry.sidecar) return null;
 		const spare = this.#spare;
 		// Chat tabs run a different argv; a worktree tab's checkout is not the spare's.
 		if (!spare || entry.kind !== "agent" || entry.worktree) return null;
@@ -393,6 +480,7 @@ export class SidecarPool {
 	/** Per-tab light wiring, attached for the entry's whole life: TAB_STATUS pushes. */
 	#wireLight(entry: PoolEntry): void {
 		const { sidecar, win } = entry;
+		if (!sidecar) return;
 		sidecar.on("status", (payload: SidecarStatusPayload) => {
 			const wasReady = entry.status === "ready";
 			entry.status = payload.status;
@@ -561,6 +649,7 @@ export class SidecarPool {
 	 */
 	#wireFull(entry: PoolEntry): void {
 		if (entry.detachFull) return;
+		if (!entry.sidecar) return;
 		this.#ensureStarted(entry);
 		const { sidecar, win } = entry;
 		const removers: (() => void)[] = [];
@@ -643,9 +732,12 @@ export class SidecarPool {
 		for (const [id, owner] of this.#requestOwners) {
 			if (owner === entry) this.#requestOwners.delete(id);
 		}
-		entry.sidecar.removeAllListeners();
-		entry.sidecar.dispose();
-		this.sidecarLifecycle?.released(entry.tabId);
+		if (entry.remote) entry.remote.handle?.disconnect();
+		else if (entry.sidecar) {
+			entry.sidecar.removeAllListeners();
+			entry.sidecar.dispose();
+			this.sidecarLifecycle?.released(entry.tabId);
+		}
 		const visible = this.#visibleByWindow.get(entry.winId);
 		visible?.delete(entry.tabId);
 		// A closed tab dissolves its pair; the partner stays as a single tab.
@@ -700,11 +792,21 @@ export class SidecarPool {
 		return entry && entry.win === win ? entry.sidecar : null;
 	}
 
+	remoteForTab(win: BrowserWindow, tabId: string): RemoteTabBackend | null {
+		const entry = this.#byTabId.get(tabId);
+		return entry?.win === win && entry.remote ? { ...entry.remote } : null;
+	}
+
+	remoteForWindow(win: BrowserWindow): RemoteTabBackend | null {
+		const remote = this.entryForWindow(win)?.remote;
+		return remote ? { ...remote } : null;
+	}
+
 	/** Send a command to the idle tab attached to `sessionPath`. */
 	async commandForIdleSession(sessionPath: string, command: RpcCommand): Promise<RpcResponse | null> {
 		const owner = this.#sessionOwners.get(sessionPath);
 		const entry = owner ? this.#byTabId.get(owner.tabId) : undefined;
-		if (!entry || entryHasWork(entry) || entry.status !== "ready") return null;
+		if (!entry?.sidecar || entryHasWork(entry) || entry.status !== "ready") return null;
 		const client = entry.sidecar.rpcClient;
 		return client ? await client.command(command) : null;
 	}
@@ -852,7 +954,7 @@ export class SidecarPool {
 	 */
 	noteSessionFile(tabId: string, sessionFile: string | null): void {
 		const entry = this.#byTabId.get(tabId);
-		if (!entry) return;
+		if (!entry || entry.remote) return;
 		const previous = entry.sessionFile;
 		if (sessionFile) this.#registerSessionFile(entry, sessionFile);
 		else this.#unregisterSessionFile(entry);
@@ -872,7 +974,7 @@ export class SidecarPool {
 	 */
 	adoptSessionCwd(tabId: string, cwd: string): boolean {
 		const entry = this.#byTabId.get(tabId);
-		if (!entry || !cwd) return false;
+		if (!entry?.sidecar || !cwd) return false;
 		if (!entry.sidecar.adoptCwd(cwd)) return false;
 		forwardToWindow(entry.win, IPC_EVENTS.TAB_STATUS, tabStatusPayload(entry));
 		this.#notifyWindowTabsChanged(entry.win);
@@ -887,9 +989,9 @@ export class SidecarPool {
 	 * single-shot; a host_tool UPDATE is not, the result follows). False when
 	 * the id is unknown — the caller falls back to the active tab's sidecar.
 	 */
-	routeSideChannel(id: string, frame: object, final: boolean): boolean {
+	routeSideChannel(id: string, frame: object, final: boolean, win?: BrowserWindow): boolean {
 		const entry = this.#requestOwners.get(id);
-		if (!entry) return false;
+		if (!entry?.sidecar || (win && entry.win !== win)) return false;
 		if (final) this.#requestOwners.delete(id);
 		entry.sidecar.sendSideChannel(frame);
 		return true;
@@ -949,7 +1051,7 @@ export class SidecarPool {
 		return [...this.#entries].map(entry => ({
 			windowId: entry.winId,
 			tabId: entry.tabId,
-			inFlight: entryHasWork(entry),
+			inFlight: !entry.remote && entryHasWork(entry),
 		}));
 	}
 
@@ -973,7 +1075,11 @@ export class SidecarPool {
 			version: TAB_LAYOUT_VERSION,
 			activeIndex,
 			tabs: entries.map(entry => {
-				const descriptor: PersistedTabDescriptor = { cwd: entry.sidecar.cwd, kind: entry.kind };
+				const descriptor: PersistedTabDescriptor = {
+					cwd: entry.remote?.target.workspace ?? entry.sidecar!.cwd,
+					kind: entry.kind,
+				};
+				if (entry.remote) descriptor.remote = entry.remote.target;
 				if (entry.sessionFile) descriptor.sessionPath = entry.sessionFile;
 				if (entry.worktree) descriptor.worktree = entry.worktree;
 				if (entry.placeholder) descriptor.placeholder = true;
@@ -1002,23 +1108,26 @@ export class SidecarPool {
 		try {
 			for (const [index, tab] of layout.tabs.entries()) {
 				const tabId = nextSnowflake();
-				const sidecar = this.acquire(
-					tab.cwd,
-					win,
-					tabId,
-					tab.sessionPath,
-					tab.kind,
-					tab.worktree,
-					!tab.sessionPath,
-					tab.placeholder === true,
-					true,
-					tab.title,
-				);
-				if (!sidecar) continue;
+				const acquired = tab.remote
+					? this.#acquireRemote(win, tab.remote, null, tab.title, tab.kind)
+					: this.acquire(
+							tab.cwd,
+							win,
+							tabId,
+							tab.sessionPath,
+							tab.kind,
+							tab.worktree,
+							!tab.sessionPath,
+							tab.placeholder === true,
+							true,
+							tab.title,
+						);
+				if (!acquired) continue;
 				restoredCount++;
-				restoredTabIds[index] = tabId;
-				firstRestoredTabId ??= tabId;
-				if (index === layout.activeIndex) activeRestoredTabId = tabId;
+				const restoredId = typeof acquired === "string" ? acquired : tabId;
+				restoredTabIds[index] = restoredId;
+				firstRestoredTabId ??= restoredId;
+				if (index === layout.activeIndex) activeRestoredTabId = restoredId;
 			}
 			const activeTabId = activeRestoredTabId ?? firstRestoredTabId;
 			if (activeTabId) {
@@ -1050,9 +1159,12 @@ export class SidecarPool {
 	disposeAll(): void {
 		this.#discardSpare();
 		for (const entry of this.#entries) {
-			entry.sidecar.removeAllListeners();
-			entry.sidecar.dispose();
-			this.sidecarLifecycle?.released(entry.tabId);
+			if (entry.remote) entry.remote.handle?.disconnect();
+			else if (entry.sidecar) {
+				entry.sidecar.removeAllListeners();
+				entry.sidecar.dispose();
+				this.sidecarLifecycle?.released(entry.tabId);
+			}
 		}
 		this.#entries.clear();
 		this.#byTabId.clear();
@@ -1086,7 +1198,7 @@ function settleAttention(entry: PoolEntry, messages: AgentMessage[] | undefined)
 function tabStatusPayload(entry: PoolEntry): IpcTabStatusPayload {
 	const payload: IpcTabStatusPayload = {
 		tabId: entry.tabId,
-		cwd: entry.sidecar.cwd,
+		cwd: entry.remote?.target.workspace ?? entry.sidecar!.cwd,
 		kind: entry.kind,
 		placeholder: entry.placeholder,
 		sessionPath: entry.sessionFile ?? null,
@@ -1094,6 +1206,7 @@ function tabStatusPayload(entry: PoolEntry): IpcTabStatusPayload {
 		// reports its connection state even with a dead in-flight run.
 		status: entry.running && entry.status === "ready" ? "running" : entry.status,
 	};
+	if (entry.remote) payload.remote = entry.remote.target;
 	if (entry.manualCompaction !== undefined) payload.backgroundCompacting = entry.manualCompaction === "background";
 	if (entry.compacting !== undefined || entry.manualCompaction !== undefined) {
 		payload.compacting = entry.compacting === true || entry.manualCompaction === "foreground";

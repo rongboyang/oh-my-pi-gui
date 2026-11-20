@@ -86,6 +86,7 @@ import { createMenu } from "./menu";
 import { deleteModelsProvider, listModelsProviders, modelsPath, upsertModelsProvider } from "./models-config";
 import { PluginCatalog } from "./plugin-catalog";
 import { fetchRemoteImage } from "./remote-image";
+import { allowsLocalIpc } from "./remote-ipc-policy";
 import { runtimeLogPath, writeRuntimeLog } from "./runtime-log";
 import type { SchedulerHost } from "./scheduler/host";
 import type { SessionIndex } from "./session-index";
@@ -143,6 +144,19 @@ function sidecarFor(deps: IpcDeps, event: Electron.IpcMainInvokeEvent): SidecarM
 	return deps.sidecarPool.sidecarForWindow(win);
 }
 
+function localIpcAllowed(deps: IpcDeps, event: Electron.IpcMainInvokeEvent, tabId?: unknown): boolean {
+	const win = BrowserWindow.fromWebContents(event.sender);
+	if (!win) return false;
+	const pool = deps.sidecarPool;
+	return allowsLocalIpc({
+		tabId,
+		activeTabId: pool.activeTabForWindow(win),
+		isLocalTab: id => pool.sidecarForTab(win, id) !== null,
+		isRemoteTab: id => pool.remoteForTab(win, id) !== null,
+		isActiveRemote: pool.remoteForWindow(win) !== null,
+	});
+}
+
 /**
  * The calling window's working directory — the bound sidecar's cwd when one
  * exists, else the cwd the window was created with (before its sidecar binds).
@@ -150,6 +164,7 @@ function sidecarFor(deps: IpcDeps, event: Electron.IpcMainInvokeEvent): SidecarM
 function cwdFor(deps: IpcDeps, event: Electron.IpcMainInvokeEvent, tabId?: string): string | null {
 	const win = BrowserWindow.fromWebContents(event.sender);
 	if (!win) return null;
+	if (!localIpcAllowed(deps, event, tabId)) return null;
 	if (tabId) return deps.sidecarPool.sidecarForTab(win, tabId)?.cwd ?? null;
 	return deps.sidecarPool.sidecarForWindow(win)?.cwd ?? deps.windowManager.recordFor(win)?.cwd ?? null;
 }
@@ -168,6 +183,7 @@ async function previewPathFor(
 	target: string,
 	tabId?: string,
 ): Promise<{ path: string } | { error: string }> {
+	if (!localIpcAllowed(deps, event, tabId)) return { error: "Local paths are unavailable for this tab" };
 	if (!isSessionOutputPath(target)) return toAbsolutePath(target, cwdFor(deps, event, tabId));
 	const resolved = await resolveSessionOutputPath(target, sessionFileFor(deps, event, tabId));
 	return resolved ? { path: resolved.absolutePath } : { error: "Session output not found" };
@@ -423,6 +439,12 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 	const { sidecarPool, sessionIndex, statsClient, logWatcher, memoryWatcher, customThemesWatcher, windowManager } =
 		deps;
 	const prefsStore = new Store<PrefsSchema>({ name: "prefs" });
+	if (deps.schedulerHost) {
+		deps.schedulerHost.allowIpc = (event, payload) => {
+			const tabId = payload && typeof payload === "object" && "tabId" in payload ? payload.tabId : undefined;
+			return localIpcAllowed(deps, event, tabId);
+		};
+	}
 
 	// Drop a closed window's tray/progress snapshot so the aggregate reflects
 	// only live windows (and re-render the tray with the new aggregate).
@@ -675,14 +697,12 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 		return dispatchRpcCommand(win, sidecar, payload.tabId, payload);
 	});
 
-	// Extension UI respond — F-UI-ORIGIN: route to the sidecar that RAISED the
-	// request (tracked by request id), not the window's active tab; the user
-	// may have switched tabs while the dialog was open. Unknown ids (raised
-	// before tracking, or after a restart) fall back to the active sidecar.
+	// Responses are accepted only for a registered origin in this window.
+	// Remote responses use a separate, explicitly scoped IPC.
 	ipcMain.handle(IPC_COMMANDS.EXTENSION_UI_RESPOND, (event, payload: IpcExtensionUiRespondPayload) => {
 		const { response } = payload;
-		if (typeof response?.id === "string" && sidecarPool.routeSideChannel(response.id, response, true)) return;
-		sidecarFor(deps, event)?.sendSideChannel(response);
+		const win = BrowserWindow.fromWebContents(event.sender);
+		if (win && typeof response?.id === "string") sidecarPool.routeSideChannel(response.id, response, true, win);
 	});
 
 	// Host tool result — same origin routing as extension UI (verified: the
@@ -690,27 +710,28 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 	// misroute to the active tab after a switch).
 	ipcMain.handle(IPC_COMMANDS.HOST_TOOL_RESULT, (event, payload: IpcHostToolResultPayload) => {
 		const { result } = payload;
-		if (typeof result?.id === "string" && sidecarPool.routeSideChannel(result.id, result, true)) return;
-		sidecarFor(deps, event)?.sendSideChannel(result);
+		const win = BrowserWindow.fromWebContents(event.sender);
+		if (win && typeof result?.id === "string") sidecarPool.routeSideChannel(result.id, result, true, win);
 	});
 
 	// Host tool update — origin routing without unregistering: the result
 	// frame follows and still needs the route.
 	ipcMain.handle(IPC_COMMANDS.HOST_TOOL_UPDATE, (event, payload: IpcHostToolUpdatePayload) => {
 		const { update } = payload;
-		if (typeof update?.id === "string" && sidecarPool.routeSideChannel(update.id, update, false)) return;
-		sidecarFor(deps, event)?.sendSideChannel(update);
+		const win = BrowserWindow.fromWebContents(event.sender);
+		if (win && typeof update?.id === "string") sidecarPool.routeSideChannel(update.id, update, false, win);
 	});
 
 	// Host URI result — same origin routing as extension UI.
 	ipcMain.handle(IPC_COMMANDS.HOST_URI_RESULT, (event, payload: IpcHostUriResultPayload) => {
 		const { result } = payload;
-		if (typeof result?.id === "string" && sidecarPool.routeSideChannel(result.id, result, true)) return;
-		sidecarFor(deps, event)?.sendSideChannel(result);
+		const win = BrowserWindow.fromWebContents(event.sender);
+		if (win && typeof result?.id === "string") sidecarPool.routeSideChannel(result.id, result, true, win);
 	});
 
 	// Sessions
 	ipcMain.handle(IPC_COMMANDS.SESSIONS_LIST, async (event, payload: IpcSessionsListPayload) => {
+		if (!localIpcAllowed(deps, event)) throw new Error("Local sessions are unavailable for this tab");
 		const scope = payload.scope === "local" ? "local" : "global";
 		const sessions = await sessionIndex.list(scope, cwdFor(deps, event) ?? undefined);
 		// Scheduled runs write ordinary session files; they open from the Tasks window instead.
@@ -718,7 +739,8 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 		return runSessions?.size ? sessions.filter(session => !runSessions.has(session.path)) : sessions;
 	});
 
-	ipcMain.handle(IPC_COMMANDS.SESSIONS_DELETE, async (_event, payload: IpcSessionsDeletePayload) => {
+	ipcMain.handle(IPC_COMMANDS.SESSIONS_DELETE, async (event, payload: IpcSessionsDeletePayload) => {
+		if (!localIpcAllowed(deps, event)) throw new Error("Local sessions are unavailable for this tab");
 		if (typeof payload.sessionPath !== "string" || !payload.sessionPath.endsWith(".jsonl")) {
 			throw new Error("Invalid session path");
 		}
@@ -740,6 +762,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 	});
 
 	ipcMain.handle(IPC_COMMANDS.SESSIONS_RENAME, async (event, payload: IpcSessionsRenamePayload) => {
+		if (!localIpcAllowed(deps, event)) throw new Error("Local sessions are unavailable for this tab");
 		if (typeof payload.sessionPath !== "string" || !payload.sessionPath.endsWith(".jsonl")) {
 			throw new Error("Invalid session path");
 		}
@@ -771,6 +794,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 	// pendingSessionPath and runs switch_session + hydrate itself), which avoids
 	// racing the renderer's boot hydration and surfaces failures in that window.
 	ipcMain.handle(IPC_COMMANDS.SESSION_OPEN_NEW_WINDOW, async (event, payload: IpcSessionOpenNewWindowPayload) => {
+		if (!localIpcAllowed(deps, event)) return false;
 		const sessionPath = typeof payload?.sessionPath === "string" ? payload.sessionPath : undefined;
 		if (sessionPath) {
 			const owner = deps.sidecarPool.sessionOwner(sessionPath);
@@ -789,6 +813,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 	// renderer performs the actual switch_session + hydrate on boot, which
 	// avoids racing the boot hydration and surfaces failures in that window.
 	ipcMain.handle(IPC_COMMANDS.SESSION_CONSUME_PENDING, event => {
+		if (!localIpcAllowed(deps, event)) return null;
 		const win = BrowserWindow.fromWebContents(event.sender);
 		return win ? (deps.windowManager.consumePendingSession(win) ?? null) : null;
 	});
@@ -810,6 +835,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 	// payload kind defers to the file. Decision logic lives in tab-spawn.ts so
 	// both refusal contracts are unit-testable without an Electron runtime.
 	ipcMain.handle(IPC_COMMANDS.SPAWN_TAB, (event, payload: IpcSpawnTabPayload) => {
+		if (!localIpcAllowed(deps, event)) return null;
 		const win = BrowserWindow.fromWebContents(event.sender);
 		if (!win) return null;
 		return spawnTabForWindow(
@@ -829,7 +855,8 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 	ipcMain.handle(IPC_COMMANDS.CLOSE_TAB, (event, payload: IpcCloseTabPayload) => {
 		const win = BrowserWindow.fromWebContents(event.sender);
 		if (!win || typeof payload?.tabId !== "string") return false;
-		if (!deps.sidecarPool.sidecarForTab(win, payload.tabId)) return false;
+		if (!deps.sidecarPool.sidecarForTab(win, payload.tabId) && !deps.sidecarPool.remoteForTab(win, payload.tabId))
+			return false;
 		return deps.sidecarPool.releaseTab(payload.tabId);
 	});
 
@@ -904,13 +931,15 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 	// F-OWN: which tab/window owns a session file, if any. The renderer
 	// belt-guards (open tab / open-in-new-window rows) consult this before
 	// attempting an attach.
-	ipcMain.handle(IPC_COMMANDS.GET_SESSION_OWNER, (_event, payload: IpcGetSessionOwnerPayload) => {
+	ipcMain.handle(IPC_COMMANDS.GET_SESSION_OWNER, (event, payload: IpcGetSessionOwnerPayload) => {
+		if (!localIpcAllowed(deps, event)) return null;
 		return typeof payload?.sessionPath === "string" ? deps.sidecarPool.sessionOwner(payload.sessionPath) : null;
 	});
 
 	// Full-content search over session files (raw JSONL grep in main, scoped to
 	// the same candidate set the list view would show).
 	ipcMain.handle(IPC_COMMANDS.SESSIONS_SEARCH, async (event, payload: IpcSessionsSearchPayload) => {
+		if (!localIpcAllowed(deps, event)) throw new Error("Local sessions are unavailable for this tab");
 		const scope = payload.scope === "local" ? "local" : "global";
 		const query = typeof payload.query === "string" ? payload.query : "";
 		const candidates = await sessionIndex.list(scope, cwdFor(deps, event) ?? undefined);
@@ -922,7 +951,8 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
 	ipcMain.handle(
 		IPC_COMMANDS.CONVERSATIONS_SEARCH,
-		async (_event, payload: IpcConversationSearchPayload): Promise<ConversationSearchResponse> => {
+		async (event, payload: IpcConversationSearchPayload): Promise<ConversationSearchResponse> => {
+			if (!localIpcAllowed(deps, event)) return { results: [], indexed: 0, indexing: null, unavailable: true };
 			const index = deps.conversationIndex;
 			if (!index) return { results: [], indexed: 0, indexing: null, unavailable: true };
 			const query = typeof payload?.query === "string" ? payload.query.slice(0, 200) : "";
@@ -1011,12 +1041,15 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 		chrome: process.versions.chrome ?? "?",
 		node: process.versions.node ?? "?",
 	}));
-	ipcMain.handle(IPC_COMMANDS.SYSTEM_OPEN_EXTERNAL, async (_event, url: string) => {
+	ipcMain.handle(IPC_COMMANDS.SYSTEM_OPEN_EXTERNAL, async (event, url: string) => {
+		if (!localIpcAllowed(deps, event)) return;
 		if (typeof url === "string" && (url.startsWith("https://") || url.startsWith("http://"))) {
 			await shell.openExternal(url);
 		}
 	});
-	ipcMain.handle(IPC_COMMANDS.SYSTEM_FETCH_REMOTE_IMAGE, (_event, url: unknown) => fetchRemoteImage(url));
+	ipcMain.handle(IPC_COMMANDS.SYSTEM_FETCH_REMOTE_IMAGE, (event, url: unknown) =>
+		localIpcAllowed(deps, event) ? fetchRemoteImage(url) : null,
+	);
 
 	// Tool-card path links — open a file in the system editor. "~" expands,
 	// relative paths resolve inside the calling window's workspace (escapes
@@ -1024,6 +1057,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 	// files outside the workspace. When no editor association exists, reveal
 	// the file in the file manager instead of failing.
 	ipcMain.handle(IPC_COMMANDS.SYSTEM_OPEN_PATH, async (event, target: string): Promise<IpcOpenPathResult> => {
+		if (!localIpcAllowed(deps, event)) return { ok: false, error: "Local paths are unavailable for this tab" };
 		if (typeof target !== "string" || !target.trim()) return { ok: false, error: "Empty path" };
 		const absolute = toAbsolutePath(target, cwdFor(deps, event));
 		if ("error" in absolute) return { ok: false, error: absolute.error };
@@ -1048,6 +1082,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 		IPC_COMMANDS.SYSTEM_RESOLVE_PATHS,
 		async (event, payload: { paths?: unknown; tabId?: string }): Promise<Array<IpcResolvedPath | null>> => {
 			const paths = Array.isArray(payload?.paths) ? payload.paths.slice(0, 500) : [];
+			if (!localIpcAllowed(deps, event, payload?.tabId)) return paths.map(() => null);
 			const cwd = cwdFor(deps, event, payload?.tabId);
 			return Promise.all(
 				paths.map(target =>
@@ -1060,6 +1095,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 	);
 
 	ipcMain.handle(IPC_COMMANDS.SYSTEM_REVEAL_PATH, async (event, target: string): Promise<IpcOpenPathResult> => {
+		if (!localIpcAllowed(deps, event)) return { ok: false, error: "Local paths are unavailable for this tab" };
 		const resolved = await resolveExistingPath(target, cwdFor(deps, event));
 		if (!resolved) return { ok: false, error: "File not found" };
 		shell.showItemInFolder(resolved.absolutePath);
@@ -1097,7 +1133,8 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 	});
 
 	// /record output: the path comes from the user's own save dialog.
-	ipcMain.handle(IPC_COMMANDS.RECORDER_SAVE, async (_event, payload: { path?: string; data?: ArrayBuffer }) => {
+	ipcMain.handle(IPC_COMMANDS.RECORDER_SAVE, async (event, payload: { path?: string; data?: ArrayBuffer }) => {
+		if (!localIpcAllowed(deps, event)) return { ok: false, error: "Local paths are unavailable for this tab" };
 		if (typeof payload?.path !== "string" || payload.path.length === 0) return { ok: false, error: "No path" };
 		if (!(payload.data instanceof ArrayBuffer)) return { ok: false, error: "No recording data" };
 		try {

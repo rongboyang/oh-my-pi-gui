@@ -139,6 +139,61 @@ describe("persisted tab layout", () => {
 		});
 	});
 
+	it("preserves remote targets without inspecting local paths or treating their sessions as files", () => {
+		const remote = {
+			profileId: "one",
+			target: "host-one",
+			instanceKey: "a".repeat(64),
+			workspace: "/same",
+			sessionId: "same",
+		};
+		const other = { ...remote, profileId: "two", target: "host-two" };
+		const value = {
+			version: 1,
+			activeIndex: 1,
+			tabs: [
+				{ cwd: "/same", kind: "agent", remote },
+				{ cwd: "/same", kind: "agent", remote: other },
+				{ cwd: "/same", kind: "agent", sessionPath: "/same-session" },
+			],
+		};
+		const checked: string[] = [];
+		const paths: TabLayoutPathChecks = {
+			directoryExists: path => {
+				checked.push(`dir:${path}`);
+				return true;
+			},
+			fileExists: path => {
+				checked.push(`file:${path}`);
+				return true;
+			},
+			sessionHasContent: path => {
+				checked.push(`content:${path}`);
+				return true;
+			},
+		};
+		expect(sanitizePersistedTabLayout(value, paths)).toEqual(value);
+		expect(checked).toEqual(["dir:/same", "file:/same-session"]);
+	});
+
+	it("drops malformed remote identities rather than restoring them as local tabs", () => {
+		const valid = { profileId: "p", target: "host", instanceKey: "a".repeat(64), workspace: "/same" };
+		const value = {
+			version: 1,
+			activeIndex: 0,
+			tabs: [
+				{ cwd: "/same", kind: "agent", remote: { ...valid, instanceKey: "bad" } },
+				{ cwd: "/other", kind: "agent", remote: valid },
+				{ cwd: "/same", kind: "agent" },
+			],
+		};
+		expect(sanitizePersistedTabLayout(value, pathChecks(["/same", "/other"], []))).toEqual({
+			version: 1,
+			activeIndex: 0,
+			tabs: [{ cwd: "/same", kind: "agent" }],
+		});
+	});
+
 	it("drops the disposable startup placeholder once an explicit tab exists", () => {
 		const value = {
 			version: 1,
