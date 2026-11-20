@@ -1,12 +1,13 @@
 import * as path from "node:path";
 import { $, Glob } from "bun";
 import { POST_PATHS, VALID_PATHS } from "../src/main/stats-client";
+import { checkRemoteContract } from "./protocol/remote-contract";
 import { checkStatsRoutes, parseStatsRoutes, rendererStatsPaths } from "./protocol/stats-routes";
 
 const root = path.resolve(import.meta.dir, "../../..");
 if (!(await Bun.file(path.join(root, "packages/coding-agent/src/modes/rpc/rpc-types.ts")).exists())) {
 	throw new Error(
-		"Protocol verification requires the adjacent coding-agent source used to build the bundled sidecar.",
+		"Protocol verification requires the adjacent coding-agent source used to build the bundled sidecar, including the remote-wire.ts and remote-wire.fixture.json contract files.",
 	);
 }
 // Not named tsconfig.json: Vite would load it for every file in protocol/, and its
@@ -25,5 +26,7 @@ const routeErrors = checkStatsRoutes(
 	{ validPaths: Object.keys(VALID_PATHS), postPaths: Object.keys(POST_PATHS), rendererPaths },
 );
 for (const error of routeErrors) console.error(`stats contract: ${error}`);
+const remoteErrors = await checkRemoteContract(path.resolve(import.meta.dir, ".."), root);
+for (const error of remoteErrors) console.error(`remote contract: ${error}`);
 
-process.exitCode = result.exitCode || (routeErrors.length > 0 ? 1 : 0);
+process.exitCode = result.exitCode || (routeErrors.length > 0 || remoteErrors.length > 0 ? 1 : 0);
