@@ -4698,4 +4698,16 @@ export const en: Record<string, string> = {
 	"remote.toolFailed": "Failed",
 	"remote.moreOutput": "Next output page",
 	"remote.loadOutput": "Load output",
+	"remote.preview.title": "Remote document",
+	"remote.preview.location": "{target}: {path}",
+	"remote.preview.loading": "Reading from the remote host…",
+	"remote.preview.files": "Remote files in this output",
+	"remote.err.unsupported":
+		"This remote omp version doesn't support the requested feature. Update omp on the remote host.",
+	"remote.err.preview_not_found": "That document no longer exists on the remote host.",
+	"remote.err.preview_permission_denied": "The remote account cannot read this document.",
+	"remote.err.preview_outside_workspace": "The document resolves outside this remote workspace.",
+	"remote.err.preview_unsupported": "Only regular Markdown and UTF-8 text files can be previewed.",
+	"remote.err.preview_too_large": "This document is too large to preview.",
+	"remote.err.preview_changed": "The document changed while it was being read. Close and reopen the preview.",
 };

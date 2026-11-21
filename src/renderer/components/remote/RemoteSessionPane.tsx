@@ -1,16 +1,18 @@
 import { Cable, CircleStop, RotateCw, Server } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { RemoteTabTarget } from "../../../shared/ipc-types";
-import type { RemoteTabEvent } from "../../../shared/remote-ipc";
+import type { RemoteActionScope, RemoteTabEvent } from "../../../shared/remote-ipc";
 import type { RemoteActionCommand, RemoteErrorCode, RemoteSessionRow } from "../../../shared/remote-wire";
 import type { ExtensionUIResponse } from "../../../shared/rpc-types";
 import { AnsiText } from "../../lib/ansi";
 import { useT } from "../../lib/i18n";
 import { MarkdownRenderer } from "../../lib/markdown";
 import { PREVIEW_SCROLL_LG } from "../../lib/preview";
+import { findRemoteDocumentPaths } from "../../lib/remote-document-paths";
 import { Button } from "../common";
 import { RemoteExtensionDialog } from "../dialogs/ExtensionDialog";
 import { remoteErrorText } from "./RemoteConnect";
+import { RemoteDocumentPreview } from "./RemoteDocumentPreview";
 import {
 	EMPTY_REMOTE_SESSION,
 	mergeRemoteMessages,
@@ -52,6 +54,9 @@ export function RemoteSessionPane({
 	const [error, setError] = useState<RemoteErrorCode | null>(null);
 	const [catalog, setCatalog] = useState<{ rows: readonly RemoteSessionRow[]; cursor: string | null } | null>(null);
 	const [selection, setSelection] = useState("");
+	const [document, setDocument] = useState<{ path: string; scope: RemoteActionScope; generation: number } | null>(
+		null,
+	);
 	const transcript = useRef<HTMLDivElement>(null);
 	const viewRef = useRef<string | undefined>(undefined);
 	const loadId = useRef(0);
@@ -66,6 +71,14 @@ export function RemoteSessionPane({
 	const connected = connection === "connected" && !!snapshot && !state.gap;
 	const sessionId = snapshot?.sessionId;
 	const runId = snapshot?.runId;
+	const epoch = snapshot?.epoch;
+	const generation = state.generation;
+	const openDocument = useCallback(
+		(path: string) => {
+			if (epoch && sessionId) setDocument({ path, scope: { epoch, sessionId }, generation });
+		},
+		[epoch, sessionId, generation],
+	);
 	const canWrite = connected && !!sessionId && !submitting && snapshot.phase !== "starting";
 	const canPrompt = canWrite && !runId && statusCode !== "stale_session";
 	const visibleHistory = useMemo(
@@ -320,7 +333,7 @@ export function RemoteSessionPane({
 				<div className="mx-auto max-w-4xl space-y-4">
 					{!snapshot && <p className="text-omp-sm text-(--omp-dim)">{t("remote.noSnapshot")}</p>}
 					{visibleHistory.map(row => (
-						<RemoteMessageRow key={row.key} row={row} tabId={tabId} view={view} />
+						<RemoteMessageRow key={row.key} row={row} tabId={tabId} view={view} openDocument={openDocument} />
 					))}
 					{history?.view === view && history?.cursor && view && (
 						<Button
@@ -343,12 +356,21 @@ export function RemoteSessionPane({
 								failed={tool.failed}
 								truncated={tool.truncated}
 								outputId={tool.outputId}
+								openDocument={openDocument}
 								tabId={tabId}
 								view={view}
 							/>
 						),
 					)}
-					{state.partial && <RemoteMessageRow row={state.partial} tabId={tabId} view={view} streaming />}
+					{state.partial && (
+						<RemoteMessageRow
+							row={state.partial}
+							tabId={tabId}
+							view={view}
+							openDocument={openDocument}
+							streaming
+						/>
+					)}
 				</div>
 			</div>
 			<form
@@ -388,6 +410,20 @@ export function RemoteSessionPane({
 			{active && connected && state.approvals.length > 0 && (
 				<RemoteExtensionDialog pending={[...state.approvals]} onResponse={response} />
 			)}
+			{document &&
+				active &&
+				document.scope.epoch === epoch &&
+				document.scope.sessionId === sessionId &&
+				document.generation === generation && (
+					<RemoteDocumentPreview
+						tabId={tabId}
+						target={target}
+						scope={document.scope}
+						path={document.path}
+						read={window.omp.remote.readDocument}
+						onClose={() => setDocument(null)}
+					/>
+				)}
 		</div>
 	);
 }
@@ -396,11 +432,13 @@ function RemoteMessageRow({
 	row,
 	tabId,
 	view,
+	openDocument,
 	streaming,
 }: {
 	row: RemoteMessage;
 	tabId: string;
 	view?: string;
+	openDocument: (path: string) => void;
 	streaming?: boolean;
 }) {
 	const t = useT();
@@ -417,6 +455,7 @@ function RemoteMessageRow({
 				failed={row.failed}
 				truncated={row.truncated}
 				outputId={row.outputId}
+				openDocument={openDocument}
 				tabId={tabId}
 				view={view}
 			/>
@@ -426,7 +465,13 @@ function RemoteMessageRow({
 			<header className="mb-1 text-omp-xs font-medium text-(--omp-dim)">
 				{t(row.role === "user" ? "remote.you" : row.role === "assistant" ? "remote.assistant" : "remote.message")}
 			</header>
-			<MarkdownRenderer content={row.text} remote streaming={streaming} singleDollarTextMath={row.role !== "user"} />
+			<MarkdownRenderer
+				content={row.text}
+				remote
+				openRemoteDocument={openDocument}
+				streaming={streaming}
+				singleDollarTextMath={row.role !== "user"}
+			/>
 			{row.truncated && <p className="text-omp-xs text-(--omp-dim)">{t("remote.truncated")}</p>}
 		</article>
 	);
@@ -440,6 +485,7 @@ function RemoteToolCard({
 	failed,
 	truncated,
 	outputId,
+	openDocument,
 	tabId,
 	view,
 }: {
@@ -450,6 +496,7 @@ function RemoteToolCard({
 	failed: boolean;
 	truncated: boolean;
 	outputId?: string;
+	openDocument: (path: string) => void;
 	tabId: string;
 	view?: string;
 }) {
@@ -482,6 +529,8 @@ function RemoteToolCard({
 	useEffect(() => {
 		if (!data && autoLoad) void load();
 	}, [data, autoLoad, load]);
+	const text = current?.data ?? data;
+	const documentPaths = useMemo(() => findRemoteDocumentPaths(text), [text]);
 	return (
 		<div className="rounded-md border border-(--omp-border-muted) bg-(--omp-bg-elevated) px-3 py-2 text-omp-sm">
 			<div className="flex flex-wrap items-center gap-2">
@@ -499,12 +548,21 @@ function RemoteToolCard({
 					</Button>
 				)}
 			</div>
-			{(current?.data || data) && (
+			{text && (
 				<pre
 					className={`${PREVIEW_SCROLL_LG} my-1 select-text whitespace-pre-wrap break-words font-mono text-omp-xs`}
 				>
-					<AnsiText links={false} text={current?.data ?? data} />
+					<AnsiText links={false} text={text} />
 				</pre>
+			)}
+			{documentPaths.length > 0 && (
+				<div aria-label={t("remote.preview.files")} className="flex flex-wrap gap-1">
+					{documentPaths.map(path => (
+						<Button key={path} onClick={() => openDocument(path)} size="sm" variant="ghost">
+							{path}
+						</Button>
+					))}
+				</div>
 			)}
 			{(current?.truncated ?? truncated) && <p className="text-omp-xs text-(--omp-dim)">{t("remote.truncated")}</p>}
 			{error && (

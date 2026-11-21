@@ -163,6 +163,7 @@ const api: OmpApi = {
 		history: (tabId, view, cursor) => ipcRenderer.invoke(IPC_COMMANDS.REMOTE_HISTORY, tabId, view, cursor),
 		output: (tabId, view, outputId, cursor) =>
 			ipcRenderer.invoke(IPC_COMMANDS.REMOTE_OUTPUT, tabId, view, outputId, cursor),
+		readDocument: (tabId, scope, path) => ipcRenderer.invoke(IPC_COMMANDS.REMOTE_READ_DOCUMENT, tabId, scope, path),
 		action: (tabId, scope, command) => ipcRenderer.invoke(IPC_COMMANDS.REMOTE_ACTION, tabId, scope, command),
 		answerAuth: (attemptId, promptId, answer) =>
 			ipcRenderer.invoke(IPC_COMMANDS.REMOTE_ANSWER_AUTH, attemptId, promptId, answer),

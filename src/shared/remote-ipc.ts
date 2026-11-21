@@ -1,5 +1,6 @@
 import type {
 	RemoteActionCommand,
+	RemoteDocumentResult,
 	RemoteErrorCode,
 	RemoteHistoryPage,
 	RemoteInstance,
@@ -58,6 +59,7 @@ export interface RemoteApi {
 	sessions(tabId: string, cursor?: string): Promise<RemoteResult<RemoteSessionPage>>;
 	history(tabId: string, view: string, cursor?: string): Promise<RemoteResult<RemoteHistoryPage>>;
 	output(tabId: string, view: string, outputId: string, cursor?: string): Promise<RemoteResult<RemoteOutputPage>>;
+	readDocument(tabId: string, scope: RemoteActionScope, path: string): Promise<RemoteResult<RemoteDocumentResult>>;
 	action(tabId: string, scope: RemoteActionScope, command: RemoteActionCommand): Promise<RemoteResult<RemoteReceipt>>;
 	answerAuth(attemptId: string, promptId: string, answer: string | null): Promise<void>;
 	onEvent(callback: (event: RemoteTabEvent) => void): () => void;

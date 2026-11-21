@@ -57,6 +57,13 @@ const DEDICATED_ERROR_CODES: Partial<Record<RemoteErrorCode, true>> = {
 	unknown_result: true,
 	unknown_request: true,
 	overflow: true,
+	unsupported: true,
+	preview_not_found: true,
+	preview_permission_denied: true,
+	preview_outside_workspace: true,
+	preview_unsupported: true,
+	preview_too_large: true,
+	preview_changed: true,
 };
 
 /** One code → one stable, actionable sentence, shared by every remote surface. */

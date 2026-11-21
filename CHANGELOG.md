@@ -5,6 +5,7 @@
 ### Added
 
 - On macOS, attach the GUI over SSH to an existing omp instance on another Mac. Disconnecting does not stop work; reconnect to recover the session, tool output, and unanswered approvals without resending commands.
+- Preview remote Markdown and UTF-8 text directly from chat or tool output without reading local files or loading embedded resources. Requires the optional remote Core preview capability.
 
 ## [1.0.2] - 2026-11-21
 

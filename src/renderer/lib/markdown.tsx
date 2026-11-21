@@ -35,6 +35,7 @@ import { remarkAutolinkBoundary } from "./remark-autolink-boundary";
 import { remarkDollarGuard } from "./remark-dollar-guard";
 import { remarkFilePaths } from "./remark-file-paths";
 import { remarkLatexMath } from "./remark-latex-math";
+import { remoteDocumentPath } from "./remote-document-paths";
 
 interface MarkdownRendererProps {
 	content: string;
@@ -60,6 +61,8 @@ interface MarkdownRendererProps {
 	streaming?: boolean;
 	/** Remote content may not trigger client-side file resolution or resource loading. */
 	remote?: boolean;
+	/** Remote transcript only: route file clicks back to the owning remote tab. */
+	openRemoteDocument?: (path: string) => void;
 }
 
 // Hoisted to module scope: stable plugin arrays and component maps keep
@@ -337,6 +340,7 @@ export async function setCodeLineNumbersPref(next: boolean): Promise<boolean> {
 const CodeLineNumbersOverride = createContext<boolean | undefined>(undefined);
 const StreamingContent = createContext(false);
 const RemoteContent = createContext(false);
+const RemoteDocumentClick = createContext<((path: string) => void) | undefined>(undefined);
 
 function useCodeLineNumbers(): boolean {
 	const override = useContext(CodeLineNumbersOverride);
@@ -697,10 +701,39 @@ const COMPONENTS: Components = {
 	img: MarkdownImage,
 };
 
+function RemoteMarkdownLink({ href, children }: ComponentPropsWithoutRef<"a">) {
+	const open = useContext(RemoteDocumentClick);
+	const target = href && fileTargetFromHref(href);
+	const path = target ? remoteDocumentPath(target.path) : null;
+	return (
+		<InsideLink.Provider value={true}>
+			{open && path ? (
+				<button className={LINK_CLASS} onClick={() => open(path)} type="button">
+					{children}
+				</button>
+			) : (
+				<span>{children}</span>
+			)}
+		</InsideLink.Provider>
+	);
+}
+
+function RemoteMarkdownCode({ className, children }: ComponentPropsWithoutRef<"code">) {
+	const open = useContext(RemoteDocumentClick);
+	const insideLink = useContext(InsideLink);
+	const path = open && !insideLink && !className ? remoteDocumentPath(textOf(children)) : null;
+	if (!open || !path) return <code className={className || INLINE_CODE_CLASS}>{children}</code>;
+	return (
+		<button className={LINKED_CODE_CLASS} onClick={() => open(path)} type="button">
+			{children}
+		</button>
+	);
+}
+
 const REMOTE_COMPONENTS: Components = {
 	...COMPONENTS,
-	a: ({ children }) => <span className={LINK_CLASS}>{children}</span>,
-	code: ({ className, children }) => <code className={className || INLINE_CODE_CLASS}>{children}</code>,
+	a: RemoteMarkdownLink,
+	code: RemoteMarkdownCode,
 	img: ({ alt }) => <MarkdownImageFallback alt={alt ?? ""} />,
 };
 
@@ -715,6 +748,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
 	singleDollarTextMath = true,
 	streaming = false,
 	remote = false,
+	openRemoteDocument,
 }: MarkdownRendererProps) {
 	return (
 		<div className="markdown-body text-[1em] leading-[1.5]">
@@ -722,14 +756,16 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
 				<CodeLineNumbersOverride.Provider value={codeLineNumbers}>
 					<MarkdownSourcePath.Provider value={sourcePath}>
 						<RemoteContent.Provider value={remote}>
-							<ReactMarkdown
-								remarkPlugins={singleDollarTextMath ? REMARK_PLUGINS : REMARK_PLUGINS_LITERAL_SINGLE_DOLLAR}
-								rehypePlugins={REHYPE_PLUGINS}
-								components={remote ? REMOTE_COMPONENTS : COMPONENTS}
-								urlTransform={URL_TRANSFORM}
-							>
-								{content}
-							</ReactMarkdown>
+							<RemoteDocumentClick.Provider value={remote ? openRemoteDocument : undefined}>
+								<ReactMarkdown
+									remarkPlugins={singleDollarTextMath ? REMARK_PLUGINS : REMARK_PLUGINS_LITERAL_SINGLE_DOLLAR}
+									rehypePlugins={REHYPE_PLUGINS}
+									components={remote ? REMOTE_COMPONENTS : COMPONENTS}
+									urlTransform={URL_TRANSFORM}
+								>
+									{content}
+								</ReactMarkdown>
+							</RemoteDocumentClick.Provider>
 						</RemoteContent.Provider>
 					</MarkdownSourcePath.Provider>
 				</CodeLineNumbersOverride.Provider>

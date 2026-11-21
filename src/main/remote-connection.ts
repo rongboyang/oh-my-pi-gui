@@ -3,9 +3,12 @@ import type { RemoteActionScope, RemoteTabEvent } from "../shared/remote-ipc";
 import {
 	parseRemoteClientFrame,
 	REMOTE_ERROR_CODES,
+	REMOTE_MAX_DOCUMENT_BYTES,
 	REMOTE_MAX_PAGE_ITEMS,
+	REMOTE_MAX_PATH_LENGTH,
 	REMOTE_MAX_QUEUE_BYTES,
 	type RemoteActionCommand,
+	type RemoteDocumentResult,
 	type RemoteErrorCode,
 	type RemoteHistoryPage,
 	type RemoteInstance,
@@ -229,6 +232,35 @@ export class RemoteConnection {
 		)
 			throw new RemoteSshError("protocol_incompatible");
 		return { view, outputId, data: result.data, truncated: result.truncated, cursor: result.cursor };
+	}
+
+	async readDocument(scope: RemoteActionScope, path: string): Promise<RemoteDocumentResult> {
+		const attachment = this.#require();
+		const snapshot = attachment.snapshot;
+		if (!snapshot || !attachment.ready) throw new RemoteSshError("disconnected");
+		if (scope.epoch !== snapshot.epoch) throw new RemoteSshError("stale_epoch");
+		if (this.#sessionMissing || scope.sessionId !== snapshot.sessionId) throw new RemoteSshError("stale_session");
+		if (!attachment.hello?.capabilities.includes("read_document")) throw new RemoteSshError("unsupported");
+		const value = object(await attachment.request("read_document", { path }));
+		if (
+			attachment !== this.#attachment ||
+			attachment.snapshot?.epoch !== scope.epoch ||
+			attachment.snapshot.sessionId !== scope.sessionId
+		)
+			throw new RemoteSshError("stale_session");
+		const prefix = this.target.workspace === "/" ? "/" : `${this.target.workspace}/`;
+		if (
+			typeof value?.path !== "string" ||
+			value.path.length > REMOTE_MAX_PATH_LENGTH ||
+			!value.path.startsWith(prefix) ||
+			/[\\\r\n\0]/.test(value.path) ||
+			value.path.split("/").includes("..") ||
+			typeof value.content !== "string" ||
+			Buffer.byteLength(value.content) > REMOTE_MAX_DOCUMENT_BYTES ||
+			(value.mediaType !== "text/plain" && value.mediaType !== "text/markdown")
+		)
+			throw new RemoteSshError("protocol_incompatible");
+		return { path: value.path, content: value.content, mediaType: value.mediaType };
 	}
 
 	async action(scope: RemoteActionScope, command: RemoteActionCommand): Promise<RemoteReceipt> {

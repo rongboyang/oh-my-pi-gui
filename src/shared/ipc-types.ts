@@ -338,6 +338,7 @@ export const IPC_COMMANDS = {
 	REMOTE_SESSIONS: "remote:sessions",
 	REMOTE_HISTORY: "remote:history",
 	REMOTE_OUTPUT: "remote:output",
+	REMOTE_READ_DOCUMENT: "remote:read-document",
 	REMOTE_ACTION: "remote:action",
 	REMOTE_ANSWER_AUTH: "remote:answer-auth",
 } as const;

@@ -290,6 +290,17 @@ export function registerRemoteIpc(
 		if (!identifier(view) || !identifier(outputId)) throw new RemoteSshError("invalid_request");
 		return connection(win, id).output(view, outputId, optionalCursor(cursor));
 	});
+	handle(IPC_COMMANDS.REMOTE_READ_DOCUMENT, (win, id, rawScope, path) => {
+		const { epoch, sessionId } = asRecord(rawScope);
+		if (
+			!identifier(epoch) ||
+			!identifier(sessionId) ||
+			typeof path !== "string" ||
+			!parseRemoteClientFrame({ type: "request", id: "validate", op: "read_document", data: { path } })
+		)
+			throw new RemoteSshError("invalid_request");
+		return connection(win, id).readDocument({ epoch, sessionId }, path);
+	});
 	handle(IPC_COMMANDS.REMOTE_ACTION, (win, id, rawScope, command) => {
 		const { epoch, sessionId } = asRecord(rawScope);
 		if (
