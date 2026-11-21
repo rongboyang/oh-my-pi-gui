@@ -68,7 +68,7 @@ git push --force-with-lease=refs/heads/remote-omp-ssh:"$core_remote" personal HE
 bash /path/to/personal-mac.sh install /path/to/omp-personal-REV.zip SHA256
 ```
 
-安装脚本在两台机器上都写入 `~/Applications/omp Remote.app` 和 `~/.local/bin/omp`，校验 SHA256 及签名。原 `/Applications/omp.app` 不变。原 CLI 如存在，第一次安装时备份为 `~/.local/share/omp-remote/previous-omp`。个人包的 GUI 更新源是个人 fork；日常升级用本文流程，不点正式版本的升级链接。需要回退个人包时，退出个人 GUI 后，用保留的上一个 ZIP 和 SHA256 再安装一次。
+安装脚本在两台机器上都写入 `~/Applications/omp Remote.app` 和 `~/.local/bin/omp`，校验 SHA256 及签名。原 `/Applications/omp.app` 不变。原 CLI 如存在，第一次安装时备份为 `~/.local/share/omp-remote/previous-omp`。个人包没有内置更新渠道，日常升级用本文流程。需要回退个人包时，退出个人 GUI 后，用保留的上一个 ZIP 和 SHA256 再安装一次。
 
 ## M1 Max 接入 M4 Pro
 

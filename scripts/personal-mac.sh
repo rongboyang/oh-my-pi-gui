@@ -26,10 +26,14 @@ build)
 	bun run check:types
 	bun run build:omp
 	bun run build
-	bun run electron-builder --config electron-builder.personal.yml --mac --arm64 --dir --publish never \
+	bun run electron-builder --config electron-builder.personal.cjs --mac --arm64 --dir --publish never \
 		"--config.directories.output=$stage/out"
 	app="$stage/out/mac-arm64/omp.app"
 	/usr/bin/codesign --verify --deep --strict "$app"
+	if /usr/libexec/PlistBuddy -c 'Print CFBundleURLTypes' "$app/Contents/Info.plist" >/dev/null 2>&1 ||
+		[[ -e "$app/Contents/Resources/app-update.yml" ]]; then
+		fail 'Personal builds must not register deep links or an updater feed.'
+	fi
 	# electron-builder re-signs the embedded executable. Probe the shipped binary.
 	PI_CODING_AGENT_DIR="$stage/agent" bun scripts/smoke-sidecar.mjs "$app/Contents/Resources/omp"
 	/usr/bin/ditto -c -k --keepParent "$app" "$stage/omp.zip"
