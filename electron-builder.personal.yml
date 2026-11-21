@@ -1,0 +1,7 @@
+extends: ./electron-builder.yml
+appId: sh.omp.gui.personal
+protocols: []
+publish:
+  provider: github
+  owner: rongboyang
+  repo: oh-my-pi-gui

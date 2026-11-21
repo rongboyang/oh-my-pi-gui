@@ -223,6 +223,8 @@ Closing the GUI or clicking **Disconnect** does not stop remote work. Reconnect 
 
 With a Core build that supports remote document previews, open a file reference in the conversation or a file button beneath a tool result. The preview reads Markdown or UTF-8 text within the remote workspace. It is read-only, loads no embedded resources, and reads the latest content each time you open it. Older remote Core builds still support conversations without previews.
 
+To track upstream while keeping this feature on a personal branch, see [rebase and dual-Mac deployment](./_docs/remote-omp-personal-deploy.md).
+
 <a id="en-shortcuts"></a>
 ### Keyboard shortcuts
 
@@ -603,6 +605,8 @@ Windows 包当前未签名。首次启动前请确认下载来源；Windows Smar
 关闭 GUI 或点击**断开连接**都不会停止远端任务。重新连接后可查看同一会话，包括工具输出和尚未处理的审批。只有点击**停止远端任务**才会停止当前任务。如果远端实例本身已退出，GUI 不会代为启动或重发消息；请在远端主机重启实例后打开已保存的会话。
 
 如果远端 Core 支持文档预览，可以点击对话中的文件引用，或工具输出下方的文件按钮。预览只读，仅显示远端工作区内的 Markdown 或 UTF-8 纯文本，不加载嵌入资源。每次打开都从远端读取最新内容。旧版远端 Core 仍可正常对话，只是不支持预览。
+
+个人分支跟进上游版本、给两台 Mac 安装同一份构建的步骤，见[个人分支 rebase 与双机部署](./_docs/remote-omp-personal-deploy.md)。
 
 <a id="zh-shortcuts"></a>
 ### 快捷键
