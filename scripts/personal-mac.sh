@@ -25,13 +25,13 @@ build)
 	trap 'rm -rf "$stage"' EXIT
 	bun run check:types
 	bun run build:omp
-	PI_CODING_AGENT_DIR="$stage/agent" bun scripts/smoke-sidecar.mjs resources/omp
 	bun run build
 	bun run electron-builder --config electron-builder.personal.yml --mac --arm64 --dir --publish never \
 		"--config.directories.output=$stage/out"
 	app="$stage/out/mac-arm64/omp.app"
 	/usr/bin/codesign --verify --deep --strict "$app"
-	cmp resources/omp "$app/Contents/Resources/omp"
+	# electron-builder re-signs the embedded executable. Probe the shipped binary.
+	PI_CODING_AGENT_DIR="$stage/agent" bun scripts/smoke-sidecar.mjs "$app/Contents/Resources/omp"
 	/usr/bin/ditto -c -k --keepParent "$app" "$stage/omp.zip"
 	mv "$stage/omp.zip" "$zip"
 	printf '\nGUI: %s\nCore: %s\nSHA256: %s\nArtifact: %s\n' "$(git rev-parse HEAD)" "$pin" "$(sha256 "$zip")" "$zip"
