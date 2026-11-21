@@ -50,7 +50,12 @@ function classifyExit(code: number | null, stderr: string): RemoteErrorCode {
 	if (code === 3) return "no_instance";
 	if (code === 4) return "identity_mismatch";
 	if (code === 5) return "protocol_incompatible";
-	if (code === 2) return "invalid_request";
+	if (code === 2) {
+		// Core releases before `omp remote` reject our fixed discovery/attach flags.
+		return /unknown (?:flag|option):\s+--(?:json|instance)\b/i.test(stderr)
+			? "protocol_incompatible"
+			: "invalid_request";
+	}
 	if (code === 127 || /(?:omp: command not found|omp: not found|command not found: omp)/i.test(stderr))
 		return "cli_missing";
 	if (/REMOTE HOST IDENTIFICATION HAS CHANGED|host key has changed|offending .* key/i.test(stderr))

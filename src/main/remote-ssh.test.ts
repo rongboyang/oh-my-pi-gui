@@ -119,6 +119,7 @@ it.each([
 	[3, "", "no_instance"],
 	[4, "", "identity_mismatch"],
 	[5, "", "protocol_incompatible"],
+	[2, "Error: unknown flag: --json\nRun `omp --help` for available flags.", "protocol_incompatible"],
 	[127, "", "cli_missing"],
 	[255, "Host key verification failed", "host_key_unknown"],
 	[255, "REMOTE HOST IDENTIFICATION HAS CHANGED", "host_key_changed"],
