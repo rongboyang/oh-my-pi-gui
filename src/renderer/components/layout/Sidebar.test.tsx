@@ -31,6 +31,7 @@ const globals = globalThis as Record<string, unknown>;
 globals.document = document;
 globals.window = window;
 globals.Event = Event;
+globals.CustomEvent = window.CustomEvent;
 globals.HTMLElement = HTMLElement;
 globals.Node = Node;
 globals.IS_REACT_ACT_ENVIRONMENT = true;
@@ -435,6 +436,31 @@ describe("Sidebar menus and pinned ordering", () => {
 			worktree: undefined,
 		});
 		expect(omp.sidecar.setProject).not.toHaveBeenCalled();
+	});
+
+	it("routes new sessions and history to the active remote tab without reading local sessions", async () => {
+		const omp = installMockOmp(LIST);
+		const remote = { profileId: "profile", target: "m4-pro", instanceKey: "key", workspace: "/remote/project" };
+		useTabsStore.setState({
+			tabs: [{ id: "remote", cwd: remote.workspace, status: "ready", kind: "agent", unreadDone: false, remote }],
+			activeTabId: "remote",
+		});
+		const controls: WindowEventMap["omp:remote-session-control"]["detail"][] = [];
+		const capture = (event: WindowEventMap["omp:remote-session-control"]) => controls.push(event.detail);
+		globalThis.window.addEventListener("omp:remote-session-control", capture);
+		try {
+			await mount(<Sidebar />);
+			await fire(container.querySelector("[data-sidebar-new-agent]"), "onClick");
+			await fire(container.querySelector('[aria-label="Saved remote sessions"]'), "onClick");
+			expect(controls).toEqual([
+				{ tabId: "remote", command: "new" },
+				{ tabId: "remote", command: "saved" },
+			]);
+			expect(omp.sessions.list).not.toHaveBeenCalled();
+			expect(omp.tabs.spawn).not.toHaveBeenCalled();
+		} finally {
+			globalThis.window.removeEventListener("omp:remote-session-control", capture);
+		}
 	});
 
 	it("opens the existing global session picker from the header", async () => {

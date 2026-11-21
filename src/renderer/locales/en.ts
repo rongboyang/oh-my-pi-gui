@@ -4678,6 +4678,13 @@ export const en: Record<string, string> = {
 	"remote.disconnect": "Disconnect",
 	"remote.newSession": "New remote session",
 	"remote.savedSessions": "Saved remote sessions",
+	"remote.sessionCancelled": "The remote host cancelled the session change.",
+	"remote.model.select": "Select remote model",
+	"remote.model.search": "Search remote models",
+	"remote.model.loading": "Loading models from the remote host…",
+	"remote.model.empty": "No matching models on the remote host.",
+	"remote.model.upgrade": "Update omp on the remote host and restart the instance to select models.",
+	"remote.model.changeFailed": "Could not confirm the remote model change.",
 	"remote.restarted":
 		"The remote instance restarted. Only saved sessions can be restored; its previous tasks and approvals did not carry over.",
 	"remote.unresolved": "{count} remote operation(s) could not be confirmed. Nothing was sent again.",

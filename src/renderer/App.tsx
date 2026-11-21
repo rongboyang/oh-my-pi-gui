@@ -70,6 +70,7 @@ import { isImeKeyEvent } from "./lib/ime";
 import { chordFromEvent, compileKeymap, KEYMAP_ACTION_BY_ID, KEYMAP_ACTIONS, type KeymapActionId } from "./lib/keymap";
 import { abortActiveTurn, restoreQueuedMessages } from "./lib/messages";
 import { watchPluginActivation } from "./lib/plugin-activation";
+import { controlRemoteSession } from "./lib/remote-session-controls";
 import { closeActiveTab } from "./lib/tab-close";
 import { acceptsActiveTabEvents, onActiveTabRouteSettled, onActiveTabRouteState } from "./lib/tab-routing";
 import { focusedTabRpc } from "./lib/tab-rpc";
@@ -824,6 +825,15 @@ export function App() {
 				if (payload?.approvalMode) useSettingsStore.getState().setApprovalMode(payload.approvalMode);
 				return;
 			}
+			if (action === "new-session") {
+				const { tabs, activeTabId } = useTabsStore.getState();
+				const active = tabs.find(tab => tab.id === activeTabId);
+				if (active?.remote) {
+					ui.returnToConversation();
+					controlRemoteSession(active.id, "new");
+					return;
+				}
+			}
 			if (
 				useSessionStore.getState().isStreaming &&
 				(action === "new-session" ||
@@ -934,7 +944,7 @@ export function App() {
 			<ExtensionDialog />
 			<LinkMenuHost />
 			<FirstRunOnboardingDialog />
-			<ModelPicker />
+			{!activeTabRemote && <ModelPicker />}
 			<RenameSessionDialog />
 			<WorktreeDialog />
 			<WorktreeCloseDialog />

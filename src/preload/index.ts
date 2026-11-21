@@ -160,6 +160,7 @@ const api: OmpApi = {
 		disconnect: tabId => ipcRenderer.invoke(IPC_COMMANDS.REMOTE_DISCONNECT, tabId),
 		sync: tabId => ipcRenderer.invoke(IPC_COMMANDS.REMOTE_SYNC, tabId),
 		sessions: (tabId, cursor) => ipcRenderer.invoke(IPC_COMMANDS.REMOTE_SESSIONS, tabId, cursor),
+		models: (tabId, view) => ipcRenderer.invoke(IPC_COMMANDS.REMOTE_MODELS, tabId, view),
 		history: (tabId, view, cursor) => ipcRenderer.invoke(IPC_COMMANDS.REMOTE_HISTORY, tabId, view, cursor),
 		output: (tabId, view, outputId, cursor) =>
 			ipcRenderer.invoke(IPC_COMMANDS.REMOTE_OUTPUT, tabId, view, outputId, cursor),

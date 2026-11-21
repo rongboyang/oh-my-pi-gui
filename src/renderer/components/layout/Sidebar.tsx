@@ -67,6 +67,7 @@ import { basename, cx, formatTimeAgo } from "../../lib/format";
 import { useT } from "../../lib/i18n";
 import { isImeKeyEvent } from "../../lib/ime";
 import { compileKeymap, KEYMAP_ACTIONS, onEscape } from "../../lib/keymap";
+import { controlRemoteSession } from "../../lib/remote-session-controls";
 import { sessionDisplayTitle } from "../../lib/session-title";
 import {
 	buildSessionTree,
@@ -278,6 +279,7 @@ export function Sidebar() {
 	const tabs = useTabsStore(s => s.tabs);
 	const activeTabId = useTabsStore(s => s.activeTabId);
 	const activeTab = tabs.find(tab => tab.id === activeTabId);
+	const remote = activeTab?.remote;
 	const tabGroups = useTabsStore(s => s.groups);
 	const shownPair = useTabsStore(s => s.split);
 	// Split pairs by session file (gui#30): a pair's rows sit together like its
@@ -336,7 +338,7 @@ export function Sidebar() {
 		refresh,
 		deleteSession,
 		renameSession,
-	} = useSessionList("global");
+	} = useSessionList("global", !remote);
 	// A string, so a tab's other changes don't recompute the list.
 	const openSessionKeys = tabs.flatMap(tab => [tab.sessionPath ?? [], tab.sessionId ?? []]).join("\n");
 	const { sessions, heirs } = useMemo(() => {
@@ -622,7 +624,8 @@ export function Sidebar() {
 	};
 	const startNew = () => {
 		useUiStore.getState().returnToConversation();
-		void openTab({ kind: "agent", work: true });
+		if (activeTab && remote) controlRemoteSession(activeTab.id, "new");
+		else void openTab({ kind: "agent", work: true });
 	};
 	const startProjectSession = (projectCwd: string) => {
 		useUiStore.getState().returnToConversation();
@@ -1437,13 +1440,20 @@ export function Sidebar() {
 							className="omp-pressable group/nav flex h-8 min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2 text-left text-omp-md font-medium text-[var(--omp-text)] hover:bg-[var(--omp-sidebar-item-hover)]"
 						>
 							<SquarePen aria-hidden="true" size={16} strokeWidth={1.75} className="shrink-0" />
-							<span className="min-w-0 flex-1 truncate">{t("sidebar.newSession")}</span>
+							<span className="min-w-0 flex-1 truncate">
+								{t(remote ? "remote.newSession" : "sidebar.newSession")}
+							</span>
 						</button>
 						<button
 							type="button"
-							onClick={openSessionPicker}
-							title={t("sidebar.search")}
-							aria-label={t("sidebar.search")}
+							onClick={() => {
+								if (activeTab && remote) {
+									useUiStore.getState().returnToConversation();
+									controlRemoteSession(activeTab.id, "saved");
+								} else openSessionPicker();
+							}}
+							title={t(remote ? "remote.savedSessions" : "sidebar.search")}
+							aria-label={t(remote ? "remote.savedSessions" : "sidebar.search")}
 							className="omp-pressable flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--omp-muted)] hover:bg-[var(--omp-selected-bg)] hover:text-[var(--omp-text)]"
 						>
 							<Search aria-hidden="true" size={15} />
@@ -1510,8 +1520,16 @@ export function Sidebar() {
 						</button>
 					)}
 				</div>
+				{remote && (
+					<div className="min-h-0 flex-1 px-4 py-2 text-omp-sm text-(--omp-dim)">
+						<p className="font-medium">{t("remote.host", { target: remote.target })}</p>
+						<p className="truncate" title={remote.workspace}>
+							{remote.workspace}
+						</p>
+					</div>
+				)}
 
-				<div className="flex h-7 shrink-0 items-center ps-4 pe-2.5">
+				<div className={remote ? "hidden" : "flex h-7 shrink-0 items-center ps-4 pe-2.5"}>
 					<span className="min-w-0 flex-1 truncate text-omp-xs font-medium text-[var(--omp-dim)]">
 						{t("sidebar.projects")}
 					</span>
@@ -1566,7 +1584,13 @@ export function Sidebar() {
 					</button>
 				</div>
 
-				<div className="omp-sidebar-list relative min-h-0 flex-1 overflow-y-auto px-2 pb-3 [overflow-anchor:none]">
+				<div
+					className={
+						remote
+							? "hidden"
+							: "omp-sidebar-list relative min-h-0 flex-1 overflow-y-auto px-2 pb-3 [overflow-anchor:none]"
+					}
+				>
 					<Glide activeKey={sessionId ?? null} selector="[data-glide-target]" variant="pill" />
 					{listError && sessions.length > 0 && (
 						<p role="alert" className="mx-2 mb-1 break-words text-omp-xs text-[var(--omp-error)]">
@@ -1697,7 +1721,7 @@ export function Sidebar() {
 				</div>
 
 				{/* Bulk actions for the selected rows. */}
-				{selecting && (
+				{!remote && selecting && (
 					<div
 						role="toolbar"
 						aria-label={t("sidebar.bulk.label")}

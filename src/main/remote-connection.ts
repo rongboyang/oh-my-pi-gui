@@ -2,6 +2,7 @@ import type { RemoteTabTarget } from "../shared/ipc-types";
 import type { RemoteActionScope, RemoteTabEvent } from "../shared/remote-ipc";
 import {
 	parseRemoteClientFrame,
+	parseRemoteModels,
 	REMOTE_ERROR_CODES,
 	REMOTE_MAX_DOCUMENT_BYTES,
 	REMOTE_MAX_PAGE_ITEMS,
@@ -12,6 +13,7 @@ import {
 	type RemoteErrorCode,
 	type RemoteHistoryPage,
 	type RemoteInstance,
+	type RemoteModels,
 	type RemoteOutputPage,
 	type RemoteReceipt,
 	type RemoteSessionPage,
@@ -207,6 +209,16 @@ export class RemoteConnection {
 		return sessionPage(await this.#require().request("sessions", cursor ? { cursor } : {}));
 	}
 
+	async models(view: string): Promise<RemoteModels> {
+		const attachment = this.#requireView(view);
+		if (!attachment.hello?.capabilities.includes("select_model")) throw new RemoteSshError("unsupported");
+		const models = parseRemoteModels(await attachment.request("models", { view }));
+		if (!models) throw new RemoteSshError("protocol_incompatible");
+		if (attachment !== this.#attachment || attachment.snapshot?.view !== view)
+			throw new RemoteSshError("stale_session");
+		return models;
+	}
+
 	async history(view: string, cursor?: string): Promise<RemoteHistoryPage> {
 		const attachment = this.#requireView(view);
 		const result = object(await attachment.request("history", { view, ...(cursor ? { cursor } : {}) }));
@@ -270,10 +282,14 @@ export class RemoteConnection {
 		if (scope.epoch !== snapshot.epoch) throw new RemoteSshError("stale_epoch");
 		if (scope.sessionId !== snapshot.sessionId) throw new RemoteSshError("stale_session");
 		const switchSession = command.type === "new_session" || command.type === "open_session";
+		const changesModel = command.type === "set_model";
+		if (changesModel && !attachment.hello?.capabilities.includes("select_model"))
+			throw new RemoteSshError("unsupported");
 		if (this.#sessionMissing && !switchSession && !(command.type === "respond" && !this.#running))
 			throw new RemoteSshError("stale_session");
-		if (this.#switching || (switchSession && this.#running)) throw new RemoteSshError("busy");
-		this.#switching = switchSession;
+		const exclusive = switchSession || changesModel;
+		if (this.#switching || (exclusive && this.#running)) throw new RemoteSshError("busy");
+		this.#switching = exclusive;
 		try {
 			const result = await this.#send(attachment, scope, command);
 			if (switchSession && result.status === "succeeded") {
@@ -310,7 +326,10 @@ export class RemoteConnection {
 		const { actionId } = this.journal.begin(this.target, scope);
 		const settled = Promise.withResolvers<RemoteReceipt>();
 		const waitsForTerminal =
-			command.type === "new_session" || command.type === "open_session" || command.type === "stop";
+			command.type === "new_session" ||
+			command.type === "open_session" ||
+			command.type === "stop" ||
+			command.type === "set_model";
 		if (waitsForTerminal) this.#waiting.set(actionId, settled.resolve);
 		try {
 			let receipt = parseReceipt(await attachment.request("action", { ...candidate, actionId }));

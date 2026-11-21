@@ -21,7 +21,7 @@ export const REMOTE_RECONNECT_MAX_DELAY_MS = 30_000;
 export const REMOTE_MAX_DOCUMENT_BYTES = 512 * 1024;
 
 export const REMOTE_REQUIRED_CAPABILITIES = ["snapshot", "output", "approvals", "receipts"] as const;
-export const REMOTE_OPTIONAL_CAPABILITIES = ["read_document"] as const;
+export const REMOTE_OPTIONAL_CAPABILITIES = ["read_document", "select_model"] as const;
 // Unknown capability strings are retained for forward negotiation.
 export type RemoteCapability = string;
 
@@ -89,6 +89,15 @@ export interface RemoteSessionPage {
 	sessions: readonly RemoteSessionRow[];
 	cursor: string | null;
 }
+export interface RemoteModel {
+	provider: string;
+	id: string;
+	name: string;
+}
+export interface RemoteModels {
+	current: RemoteModel | null;
+	models: readonly RemoteModel[];
+}
 export interface RemoteHistoryPage {
 	view: string;
 	items: readonly unknown[];
@@ -133,6 +142,7 @@ export type RemoteActionCommand =
 	| { type: "prompt"; message: string }
 	| { type: "new_session" }
 	| { type: "open_session"; sessionId: string }
+	| { type: "set_model"; provider: string; modelId: string }
 	| { type: "respond"; requestId: string; response: unknown }
 	| { type: "stop"; runId: string };
 
@@ -141,6 +151,7 @@ export type RemoteRequestData = {
 	heartbeat: { lease: number };
 	sync: { lease: number; resumeSessionId?: string };
 	sessions: { cursor?: string };
+	models: { view: string };
 	history: { view: string; cursor?: string };
 	output: { view: string; outputId: string; cursor?: string };
 	receipt: { epoch: string; sessionId: string; actionId: string };
@@ -273,6 +284,26 @@ function capabilities(value: unknown): boolean {
 function optionalId(value: ObjectValue, key: string): boolean {
 	return !Object.hasOwn(value, key) || text(value[key]);
 }
+export function parseRemoteModel(value: unknown): RemoteModel | null {
+	return object(value) &&
+		keys(value, ["provider", "id", "name"]) &&
+		text(value.provider) &&
+		text(value.id) &&
+		text(value.name)
+		? (value as unknown as RemoteModel)
+		: null;
+}
+
+export function parseRemoteModels(value: unknown): RemoteModels | null {
+	return object(value) &&
+		keys(value, ["current", "models"]) &&
+		(value.current === null || parseRemoteModel(value.current) !== null) &&
+		Array.isArray(value.models) &&
+		value.models.every(model => parseRemoteModel(model) !== null)
+		? (value as unknown as RemoteModels)
+		: null;
+}
+
 function command(value: unknown): boolean {
 	if (!object(value)) return false;
 	switch (value.type) {
@@ -286,6 +317,8 @@ function command(value: unknown): boolean {
 			return keys(value, ["type"]);
 		case "open_session":
 			return keys(value, ["type", "sessionId"]) && text(value.sessionId);
+		case "set_model":
+			return keys(value, ["type", "provider", "modelId"]) && text(value.provider) && text(value.modelId);
 		case "respond":
 			return keys(value, ["type", "requestId", "response"]) && text(value.requestId) && object(value.response);
 		case "stop":
@@ -309,6 +342,8 @@ function requestData(op: unknown, data: unknown): boolean {
 			);
 		case "sessions":
 			return keys(data, [], ["cursor"]) && optionalId(data, "cursor");
+		case "models":
+			return keys(data, ["view"]) && text(data.view);
 		case "history":
 			return keys(data, ["view"], ["cursor"]) && text(data.view) && optionalId(data, "cursor");
 		case "output":

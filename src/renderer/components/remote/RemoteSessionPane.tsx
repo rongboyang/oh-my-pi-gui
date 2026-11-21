@@ -1,5 +1,5 @@
 import { Cable, CircleStop, RotateCw, Server } from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useEffectEvent, useMemo, useReducer, useRef, useState } from "react";
 import type { RemoteTabTarget } from "../../../shared/ipc-types";
 import type { RemoteActionScope, RemoteTabEvent } from "../../../shared/remote-ipc";
 import type { RemoteActionCommand, RemoteErrorCode, RemoteSessionRow } from "../../../shared/remote-wire";
@@ -9,10 +9,12 @@ import { useT } from "../../lib/i18n";
 import { MarkdownRenderer } from "../../lib/markdown";
 import { PREVIEW_SCROLL_LG } from "../../lib/preview";
 import { findRemoteDocumentPaths } from "../../lib/remote-document-paths";
+import { toast } from "../../stores/toast";
 import { Button } from "../common";
 import { RemoteExtensionDialog } from "../dialogs/ExtensionDialog";
 import { remoteErrorText } from "./RemoteConnect";
 import { RemoteDocumentPreview } from "./RemoteDocumentPreview";
+import { RemoteModelPicker } from "./RemoteModelPicker";
 import {
 	EMPTY_REMOTE_SESSION,
 	mergeRemoteMessages,
@@ -58,6 +60,7 @@ export function RemoteSessionPane({
 		null,
 	);
 	const transcript = useRef<HTMLDivElement>(null);
+	const composer = useRef<HTMLTextAreaElement>(null);
 	const viewRef = useRef<string | undefined>(undefined);
 	const loadId = useRef(0);
 	const operationId = useRef(0);
@@ -193,8 +196,19 @@ export function RemoteSessionPane({
 				setError(result.data.error.code);
 				return false;
 			}
-			if (result.data.status === "unknown") {
+			if (result.data.status === "unknown" || (result.data.status === "accepted" && command.type !== "prompt")) {
 				setError("unknown_result");
+				return false;
+			}
+			if (
+				(command.type === "new_session" || command.type === "open_session") &&
+				result.data.status === "succeeded" &&
+				result.data.data !== null &&
+				typeof result.data.data === "object" &&
+				"cancelled" in result.data.data &&
+				result.data.data.cancelled === true
+			) {
+				toast({ variant: "warning", message: t("remote.sessionCancelled") });
 				return false;
 			}
 			if (response && result.data.status === "succeeded")
@@ -230,6 +244,32 @@ export function RemoteSessionPane({
 			}));
 	}
 
+	async function changeSession(command: Extract<RemoteActionCommand, { type: "new_session" | "open_session" }>) {
+		if (!canWrite || runId) {
+			setError(connected ? "busy" : "disconnected");
+			return;
+		}
+		if (await send(command)) {
+			setCatalog(null);
+			setSelection("");
+			setDraft("");
+			nearTail.current = true;
+			composer.current?.focus();
+		}
+	}
+
+	const handleSessionControl = useEffectEvent((event: WindowEventMap["omp:remote-session-control"]) => {
+		if (event.detail.tabId !== tabId) return;
+		if (event.detail.command === "new") void changeSession({ type: "new_session" });
+		else if (connected) void listSessions();
+		else setError("disconnected");
+	});
+	useEffect(() => {
+		const handle = (event: WindowEventMap["omp:remote-session-control"]) => handleSessionControl(event);
+		window.addEventListener("omp:remote-session-control", handle);
+		return () => window.removeEventListener("omp:remote-session-control", handle);
+	}, []);
+
 	function response(answer: ExtensionUIResponse): void {
 		void send({ type: "respond", requestId: answer.id, response: answer });
 	}
@@ -256,7 +296,7 @@ export function RemoteSessionPane({
 				</Button>
 				<Button
 					disabled={!canWrite || !!runId}
-					onClick={() => void send({ type: "new_session" })}
+					onClick={() => void changeSession({ type: "new_session" })}
 					size="sm"
 					variant="ghost"
 				>
@@ -308,11 +348,7 @@ export function RemoteSessionPane({
 					)}
 					<Button
 						disabled={!canWrite || !selection || !!runId}
-						onClick={() =>
-							void send({ type: "open_session", sessionId: selection }).then(ok => {
-								if (ok) setCatalog(null);
-							})
-						}
+						onClick={() => void changeSession({ type: "open_session", sessionId: selection })}
 						size="sm"
 						variant="secondary"
 					>
@@ -378,6 +414,7 @@ export function RemoteSessionPane({
 				className="flex shrink-0 items-end gap-2 border-t border-(--omp-border-muted) p-3"
 			>
 				<textarea
+					ref={composer}
 					className="min-w-0 flex-1 resize-y rounded-md border border-(--omp-border-muted) bg-(--omp-bg-elevated) px-3 py-2 text-omp-md"
 					rows={2}
 					aria-label={t("remote.prompt")}
@@ -390,6 +427,14 @@ export function RemoteSessionPane({
 							event.currentTarget.form?.requestSubmit();
 						}
 					}}
+				/>
+				<RemoteModelPicker
+					key={`${generation}:${epoch}:${sessionId}`}
+					tabId={tabId}
+					view={connected ? view : undefined}
+					active={active}
+					canSelect={!!canPrompt && snapshot.phase === "idle"}
+					select={model => send({ type: "set_model", provider: model.provider, modelId: model.id })}
 				/>
 				{runId && statusCode !== "stale_session" ? (
 					<Button

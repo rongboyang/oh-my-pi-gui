@@ -336,6 +336,7 @@ export const IPC_COMMANDS = {
 	REMOTE_DISCONNECT: "remote:disconnect",
 	REMOTE_SYNC: "remote:sync",
 	REMOTE_SESSIONS: "remote:sessions",
+	REMOTE_MODELS: "remote:models",
 	REMOTE_HISTORY: "remote:history",
 	REMOTE_OUTPUT: "remote:output",
 	REMOTE_READ_DOCUMENT: "remote:read-document",

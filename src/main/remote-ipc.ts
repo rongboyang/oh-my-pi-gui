@@ -282,6 +282,10 @@ export function registerRemoteIpc(
 	});
 	handle(IPC_COMMANDS.REMOTE_SYNC, (win, id) => connection(win, id).sync());
 	handle(IPC_COMMANDS.REMOTE_SESSIONS, (win, id, cursor) => connection(win, id).sessions(optionalCursor(cursor)));
+	handle(IPC_COMMANDS.REMOTE_MODELS, (win, id, view) => {
+		if (!identifier(view)) throw new RemoteSshError("invalid_request");
+		return connection(win, id).models(view);
+	});
 	handle(IPC_COMMANDS.REMOTE_HISTORY, (win, id, view, cursor) => {
 		if (!identifier(view)) throw new RemoteSshError("invalid_request");
 		return connection(win, id).history(view, optionalCursor(cursor));

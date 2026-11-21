@@ -4,6 +4,7 @@ import type {
 	RemoteErrorCode,
 	RemoteHistoryPage,
 	RemoteInstance,
+	RemoteModels,
 	RemoteOutputPage,
 	RemoteReceipt,
 	RemoteSessionPage,
@@ -57,6 +58,7 @@ export interface RemoteApi {
 	/** Publish a new snapshot, then only deltas newer than that snapshot, to this window. */
 	sync(tabId: string): Promise<RemoteResult<null>>;
 	sessions(tabId: string, cursor?: string): Promise<RemoteResult<RemoteSessionPage>>;
+	models(tabId: string, view: string): Promise<RemoteResult<RemoteModels>>;
 	history(tabId: string, view: string, cursor?: string): Promise<RemoteResult<RemoteHistoryPage>>;
 	output(tabId: string, view: string, outputId: string, cursor?: string): Promise<RemoteResult<RemoteOutputPage>>;
 	readDocument(tabId: string, scope: RemoteActionScope, path: string): Promise<RemoteResult<RemoteDocumentResult>>;

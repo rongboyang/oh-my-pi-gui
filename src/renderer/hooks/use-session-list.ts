@@ -27,7 +27,7 @@ interface SessionListResult {
  *   the one started after it; letting it land last put an older list back, so
  *   sessions created in between stayed missing until something refreshed again.
  */
-export function useSessionList(scope: "local" | "global" = "local"): SessionListResult {
+export function useSessionList(scope: "local" | "global" = "local", enabled = true): SessionListResult {
 	const [sessions, setSessions] = useState<SessionInfo[]>([]);
 	const [isLoading, setIsLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
@@ -37,6 +37,7 @@ export function useSessionList(scope: "local" | "global" = "local"): SessionList
 
 	const refresh = useCallback(
 		(showSpinner = false) => {
+			if (!enabled) return;
 			if (showSpinner && !firstLoadDone.current) setIsLoading(true);
 			setError(null);
 			const read = ++latestRead.current;
@@ -58,10 +59,11 @@ export function useSessionList(scope: "local" | "global" = "local"): SessionList
 					setIsLoading(false);
 				});
 		},
-		[scope],
+		[enabled, scope],
 	);
 
 	useEffect(() => {
+		if (!enabled) return;
 		refresh(true);
 		const unsubscribe = window.omp.events.onSessionsChanged(() => {
 			// Coalesce the per-append storm: trailing debounce, one refresh max
@@ -70,10 +72,11 @@ export function useSessionList(scope: "local" | "global" = "local"): SessionList
 			debounceTimer.current = window.setTimeout(() => refresh(), 350);
 		});
 		return () => {
+			latestRead.current++;
 			window.clearTimeout(debounceTimer.current);
 			unsubscribe();
 		};
-	}, [refresh]);
+	}, [enabled, refresh]);
 
 	const deleteSession = useCallback(
 		async (path: string) => {
