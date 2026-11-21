@@ -36,9 +36,9 @@ core_base=$(git -C "$GUI" show "refs/tags/$GUI_TAG:sidecar-source.json" | bun -e
   if (repo !== "nornzach/oh-my-pi" || !/^[0-9a-f]{40}$/.test(commit)) process.exit(1);
   console.log(commit);
 ')
-git fetch origin "$core_base"
-git rebase --onto "$core_base" "$core_old_base"
-git -C "$GUI" rebase --onto "refs/tags/$GUI_TAG" "$gui_old_base"
+git fetch origin "$core_base" &&
+  git rebase --onto "$core_base" "$core_old_base" &&
+  git -C "$GUI" rebase --onto "refs/tags/$GUI_TAG" "$gui_old_base"
 ```
 
 发生冲突时先停在该步骤，不继续构建或部署。按 `git status` 解决后 `git rebase --continue`，需要撤回则 `git rebase --abort`。如果 GUI 的 `sidecar-source.json` 冲突，最终文件的 `repo` 必须为 `rongboyang/oh-my-pi`、`commit` 必须为 **rebase 后 Core 的完整 SHA**；即使没冲突也要更新并提交该 pin。记录 `git rev-parse HEAD` 和 `git -C packages/gui rev-parse HEAD`。若在新终端继续，从备份和自己的远端分支核对 `core_remote` / `gui_remote` 仍为 rebase 前的 SHA，不要盲目刷新 lease。
@@ -53,10 +53,13 @@ bun install --frozen-lockfile
 (cd packages/gui && bun install --frozen-lockfile)
 artifact="$HOME/Downloads/omp-personal-$(git -C packages/gui rev-parse --short HEAD).zip"
 bash packages/gui/scripts/personal-mac.sh build "$artifact"
+```
 
-# 构建通过后，先发布 Core，再发布引用该提交的 GUI。
-git push --force-with-lease=refs/heads/remote-omp-ssh:"$core_remote" personal HEAD:refs/heads/remote-omp-ssh
-git -C packages/gui push --force-with-lease=refs/heads/remote-omp-ssh:"$gui_remote" personal HEAD:refs/heads/remote-omp-ssh
+构建通过后，先推 Core，再推引用该提交的 GUI：
+
+```bash
+git push --force-with-lease=refs/heads/remote-omp-ssh:"$core_remote" personal HEAD:refs/heads/remote-omp-ssh &&
+  git -C packages/gui push --force-with-lease=refs/heads/remote-omp-ssh:"$gui_remote" personal HEAD:refs/heads/remote-omp-ssh
 ```
 
 先退出两台机器上正在运行的 **omp Remote**，不用退出当前项目的远端 Core，也不用退出正式版 GUI。把脚本和同一个 ZIP 传到 M4 Pro（例如 `scp "$artifact" packages/gui/scripts/personal-mac.sh m4-pro:Downloads/`）。在两台机器上分别用构建输出的 **同一个 SHA256** 安装：
