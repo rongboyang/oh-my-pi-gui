@@ -40,11 +40,14 @@ export function startupFolder(): string | undefined {
 }
 
 export function setupDeepLinks(windowManager: WindowManager, spawnWindow: SpawnWindow): void {
-	// Register as default protocol handler (Windows/Linux)
-	if (process.defaultApp && process.argv.length >= 2) {
-		app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [process.argv[1]]);
-	} else {
-		app.setAsDefaultProtocolClient(PROTOCOL);
+	// macOS gets the scheme from Info.plist. Registering it at runtime would
+	// let an adjacent build without that declaration replace the user's handler.
+	if (process.platform !== "darwin") {
+		if (process.defaultApp && process.argv.length >= 2) {
+			app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [process.argv[1]]);
+		} else {
+			app.setAsDefaultProtocolClient(PROTOCOL);
+		}
 	}
 
 	handler = url => handleDeepLink(url, windowManager, spawnWindow);
