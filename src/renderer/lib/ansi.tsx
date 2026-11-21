@@ -326,7 +326,7 @@ function withWebLinks(text: string): ReactNode {
 	return parts;
 }
 
-export const AnsiText = memo(function AnsiText({ text }: { text: string }) {
+export const AnsiText = memo(function AnsiText({ text, links = true }: { text: string; links?: boolean }) {
 	const t = useT();
 	const clipped = text.length > ANSI_PARSE_CHAR_CAP;
 	// Cut at a token boundary: an arbitrary code-unit offset can land inside
@@ -342,7 +342,7 @@ export const AnsiText = memo(function AnsiText({ text }: { text: string }) {
 	}, [text, clipped]);
 	const segments = useMemo(() => parseAnsi(parseInput), [parseInput]);
 	if (!clipped && segments.length === 1 && Object.keys(segments[0]).length === 1) {
-		return <>{withWebLinks(segments[0].text)}</>;
+		return <>{links ? withWebLinks(segments[0].text) : segments[0].text}</>;
 	}
 	return (
 		<>
@@ -353,13 +353,13 @@ export const AnsiText = memo(function AnsiText({ text }: { text: string }) {
 				</span>
 			)}
 			{segments.map((seg, i) =>
-				seg.href ? (
+				links && seg.href ? (
 					<WebLink key={i} url={seg.href} style={{ ...segmentStyle(seg), textDecoration: "underline" }}>
 						{seg.text}
 					</WebLink>
 				) : (
 					<span key={i} style={segmentStyle(seg)}>
-						{withWebLinks(seg.text)}
+						{links ? withWebLinks(seg.text) : seg.text}
 					</span>
 				),
 			)}

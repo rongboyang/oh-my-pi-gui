@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- On macOS, attach the GUI over SSH to an existing omp instance on another Mac. Disconnecting does not stop work; reconnect to recover the session, tool output, and unanswered approvals without resending commands.
+
 ## [1.0.2] - 2026-11-21
 
 ### Added

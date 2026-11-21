@@ -22,6 +22,7 @@ import { AgentBeside } from "../agents/AgentBeside";
 import { AgentPage } from "../agents/AgentPage";
 import { ChatStream } from "../chat/ChatStream";
 import { WorkspaceDock } from "../chat/dock/WorkspaceDock";
+import { RemoteSessionPane } from "../remote/RemoteSessionPane";
 import { InputArea } from "./InputArea";
 import { useComposerFiles } from "./use-composer-files";
 
@@ -261,6 +262,10 @@ export function SplitWorkspace() {
 	const pane = (tabId: string, isSplit: boolean) => {
 		const tab = tabs.find(entry => entry.id === tabId);
 		if (!tab) return null;
+		// A remote tab paints its own pane: the local session index, runtime
+		// stores, composer and sidecar chrome must never mount for it — its
+		// state lives on the SSH instance and RemoteSessionPane owns the sync.
+		if (tab.remote) return <RemoteSessionPane tabId={tabId} target={tab.remote} active={tabId === activeTabId} />;
 		const indexedSession =
 			(tab.sessionPath ? sessionsByPath.get(tab.sessionPath) : undefined) ??
 			(tab.sessionId ? sessionsById.get(tab.sessionId) : undefined);

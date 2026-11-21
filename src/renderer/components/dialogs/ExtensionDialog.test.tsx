@@ -1,5 +1,5 @@
 import { parseHTML } from "linkedom";
-import { act } from "react";
+import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, type Mock, vi } from "vitest";
 import type { ExtensionUIRequest, ExtensionUIResponse, RpcCommand, RpcResponse } from "../../../shared/rpc-types";
@@ -11,7 +11,7 @@ import {
 	setFocusedSessionRuntime,
 } from "../../stores/session-runtime-context";
 import { createTabRuntime } from "../../stores/tab-runtime";
-import { ExtensionDialog } from "./ExtensionDialog";
+import { ExtensionDialog, RemoteExtensionDialog } from "./ExtensionDialog";
 
 const { document, window, Event, CustomEvent, HTMLElement, Node } = parseHTML("<html><body></body></html>");
 const globals = globalThis as Record<string, unknown>;
@@ -45,7 +45,7 @@ async function flush(): Promise<void> {
 	});
 }
 
-async function mount(): Promise<void> {
+async function mount(dialog: ReactElement = <ExtensionDialog />): Promise<void> {
 	respondExtensionUi = vi.fn();
 	const ompWindow = window as unknown as {
 		omp: {
@@ -70,11 +70,7 @@ async function mount(): Promise<void> {
 	document.body.appendChild(container as never);
 	root = createRoot(container as unknown as Element);
 	await act(async () => {
-		root.render(
-			<I18nProvider>
-				<ExtensionDialog />
-			</I18nProvider>,
-		);
+		root.render(<I18nProvider>{dialog}</I18nProvider>);
 	});
 }
 
@@ -605,4 +601,21 @@ describe("ExtensionDialog sign-in browser step", () => {
 
 		expect(respondExtensionUi.mock.calls).toEqual(expected);
 	});
+});
+
+it("does not launch a remote sign-in URL locally and returns the response to its remote owner", async () => {
+	const remoteResponse = vi.fn();
+	await mount(
+		<RemoteExtensionDialog
+			onResponse={remoteResponse}
+			pending={[{ type: "extension_ui_request", method: "open_url", id: "same-id", url: "https://example.test" }]}
+		/>,
+	);
+	expect(document.body.textContent).toContain("Complete sign-in on the remote host");
+	expect(buttonWithText("Open in browser")).toBeUndefined();
+	const cancel = buttonWithText("Cancel");
+	expect(cancel).toBeDefined();
+	if (cancel) await click(cancel);
+	expect(remoteResponse).toHaveBeenCalledWith({ type: "extension_ui_response", id: "same-id", cancelled: true });
+	expect(respondExtensionUi).not.toHaveBeenCalled();
 });

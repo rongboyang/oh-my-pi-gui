@@ -16,7 +16,7 @@ import { EditorView } from "@codemirror/view";
 import { ExternalLink, Eye, EyeOff } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { isApprovalRequest } from "../../../shared/approval-prompt";
-import type { ExtensionAskDialogResult, ExtensionUIRequest } from "../../../shared/rpc-types";
+import type { ExtensionAskDialogResult, ExtensionUIRequest, ExtensionUIResponse } from "../../../shared/rpc-types";
 import { AnsiText } from "../../lib/ansi";
 import { useT } from "../../lib/i18n";
 import { MarkdownRenderer } from "../../lib/markdown";
@@ -257,11 +257,13 @@ function AskDialog({
 	remaining,
 	onSubmit,
 	onCancel,
+	remote,
 }: {
 	request: Extract<ExtensionUIRequest, { method: "askDialog" | "ask" }>;
 	remaining: number | null;
 	onSubmit: (result: ExtensionAskDialogResult) => void;
 	onCancel: () => void;
+	remote?: boolean;
 }) {
 	const t = useT();
 	const [answers, setAnswers] = useState<AskAnswerState[]>(() =>
@@ -382,7 +384,7 @@ function AskDialog({
 										className="rounded-md border border-(--omp-border-muted) bg-(--omp-code-bg) px-2.5 py-2 text-omp-sm"
 										key={`preview:${option.label}`}
 									>
-										<MarkdownRenderer content={option.preview!} />
+										<MarkdownRenderer content={option.preview!} remote={remote} />
 									</div>
 								))}
 							<Input
@@ -527,11 +529,13 @@ function OpenUrlDialog({
 	codePrompt,
 	onCode,
 	onCancel,
+	remote,
 }: {
 	request: Extract<ExtensionUIRequest, { method: "open_url" }>;
 	codePrompt: CodePrompt | undefined;
 	onCode: (prompt: CodePrompt, value: string) => void;
 	onCancel: () => void;
+	remote?: boolean;
 }) {
 	const t = useT();
 	const [opened, setOpened] = useState(false);
@@ -639,21 +643,25 @@ function OpenUrlDialog({
 					<Button onClick={onCancel} size="sm" variant="ghost">
 						{t("common.cancel")}
 					</Button>
-					<Button
-						autoFocus={!loginPrompt}
-						icon={<ExternalLink size={12} />}
-						onClick={() => {
-							void window.omp.system.openExternal(target);
-							setOpened(true);
-						}}
-						size="sm"
-						variant={opened || loginPrompt ? "secondary" : "primary"}
-					>
-						{opened ? t("extDialog.openUrl.openAgain") : t("extDialog.openUrl.open")}
-					</Button>
+					{!remote && (
+						<Button
+							autoFocus={!loginPrompt}
+							icon={<ExternalLink size={12} />}
+							onClick={() => {
+								void window.omp.system.openExternal(target);
+								setOpened(true);
+							}}
+							size="sm"
+							variant={opened || loginPrompt ? "secondary" : "primary"}
+						>
+							{opened ? t("extDialog.openUrl.openAgain") : t("extDialog.openUrl.open")}
+						</Button>
+					)}
 				</div>
 				{!opened && !loginPrompt && (
-					<p className="text-right text-omp-xs text-(--omp-dim)">{t("extDialog.openUrl.hint")}</p>
+					<p className="text-right text-omp-xs text-(--omp-dim)">
+						{t(remote ? "remote.signInOnHost" : "extDialog.openUrl.hint")}
+					</p>
 				)}
 			</div>
 		</Modal>
@@ -664,13 +672,17 @@ function ActiveDialog({
 	request,
 	remaining,
 	codePrompt,
+	answer = answerExtensionRequest,
+	remote,
 }: {
 	request: ExtensionUIRequest;
 	remaining: number | null;
 	/** The paste prompt that belongs to an `open_url` request. */
 	codePrompt?: CodePrompt;
+	answer?: (id: string, response: ExtensionResponse) => void;
+	remote?: boolean;
 }) {
-	const respond = (response: ExtensionResponse) => answerExtensionRequest(request.id, response);
+	const respond = (response: ExtensionResponse) => answer(request.id, response);
 	const cancel = () => respond({ cancelled: true });
 
 	switch (request.method) {
@@ -713,6 +725,7 @@ function ActiveDialog({
 					onCancel={cancel}
 					onSubmit={result => respond({ askDialog: result })}
 					remaining={remaining}
+					remote={remote}
 					request={request}
 				/>
 			);
@@ -738,6 +751,7 @@ function ActiveDialog({
 						)
 					}
 					remaining={remaining}
+					remote={remote}
 					request={request}
 				/>
 			);
@@ -764,16 +778,43 @@ function ActiveDialog({
 					onCancel={() => {
 						// Cancelling the sign-in also answers its paste prompt, so the
 						// prompt cannot surface as its own dialog in between.
-						if (codePrompt) answerExtensionRequest(codePrompt.id, { cancelled: true });
+						if (codePrompt) answer(codePrompt.id, { cancelled: true });
 						cancel();
 					}}
-					onCode={(prompt, value) => answerExtensionRequest(prompt.id, { value })}
+					onCode={(prompt, value) => answer(prompt.id, { value })}
+					remote={remote}
 					request={request}
 				/>
 			);
 		default:
 			return null;
 	}
+}
+
+/** Remote responses must be scoped to the owning attachment, never the local dialog queue. */
+export function RemoteExtensionDialog({
+	pending,
+	onResponse,
+}: {
+	pending: ExtensionUIRequest[];
+	onResponse: (response: ExtensionUIResponse) => void;
+}) {
+	const request = pending.find(item => !NON_DIALOG_METHODS.has(item.method) && !belongsToOpenUrl(item, pending));
+	if (!request) return null;
+	const codePrompt =
+		request.method === "open_url"
+			? pending.find((item): item is CodePrompt => item.method === "input" && signInOwner(item) === request.id)
+			: undefined;
+	return (
+		<ActiveDialog
+			key={request.id}
+			answer={(id, response) => onResponse({ type: "extension_ui_response", id, ...response })}
+			codePrompt={codePrompt}
+			remaining={null}
+			remote
+			request={request}
+		/>
+	);
 }
 
 export function ExtensionDialog() {

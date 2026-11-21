@@ -58,6 +58,8 @@ interface MarkdownRendererProps {
 	 * re-tokenize the whole fence on every frame.
 	 */
 	streaming?: boolean;
+	/** Remote content may not trigger client-side file resolution or resource loading. */
+	remote?: boolean;
 }
 
 // Hoisted to module scope: stable plugin arrays and component maps keep
@@ -334,6 +336,7 @@ export async function setCodeLineNumbersPref(next: boolean): Promise<boolean> {
 /** MarkdownRenderer prop → Pre, threading around the static components map. */
 const CodeLineNumbersOverride = createContext<boolean | undefined>(undefined);
 const StreamingContent = createContext(false);
+const RemoteContent = createContext(false);
 
 function useCodeLineNumbers(): boolean {
 	const override = useContext(CodeLineNumbersOverride);
@@ -475,9 +478,10 @@ const FENCE_LANGUAGE_RE = /(?:^|\s)language-(\S+)/;
 function Pre({ children }: ComponentPropsWithoutRef<"pre">) {
 	const showLineNumbers = useCodeLineNumbers();
 	const streaming = useContext(StreamingContent);
+	const remote = useContext(RemoteContent);
 	// A mermaid fence swaps the whole block for a diagram with its own chrome —
 	// skip the <pre> wrapper so the diagram is not boxed like code.
-	if (isMermaidCodeElement(children)) return <>{children}</>;
+	if (!remote && isMermaidCodeElement(children)) return <>{children}</>;
 	// Every other fence renders through the shared CodeBlock: same language
 	// badge, copy button, gutter, and lazy highlighting as the tool cards. The
 	// fence's trailing newline never paints a visible line — strip it.
@@ -693,6 +697,13 @@ const COMPONENTS: Components = {
 	img: MarkdownImage,
 };
 
+const REMOTE_COMPONENTS: Components = {
+	...COMPONENTS,
+	a: ({ children }) => <span className={LINK_CLASS}>{children}</span>,
+	code: ({ className, children }) => <code className={className || INLINE_CODE_CLASS}>{children}</code>,
+	img: ({ alt }) => <MarkdownImageFallback alt={alt ?? ""} />,
+};
+
 /**
  * Renders markdown content with GFM, a sanitized raw-HTML subset, KaTeX math,
  * and syntax highlighting. Memoized: re-parses only when `content` changes.
@@ -703,20 +714,23 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
 	codeLineNumbers,
 	singleDollarTextMath = true,
 	streaming = false,
+	remote = false,
 }: MarkdownRendererProps) {
 	return (
 		<div className="markdown-body text-[1em] leading-[1.5]">
 			<StreamingContent.Provider value={streaming}>
 				<CodeLineNumbersOverride.Provider value={codeLineNumbers}>
 					<MarkdownSourcePath.Provider value={sourcePath}>
-						<ReactMarkdown
-							remarkPlugins={singleDollarTextMath ? REMARK_PLUGINS : REMARK_PLUGINS_LITERAL_SINGLE_DOLLAR}
-							rehypePlugins={REHYPE_PLUGINS}
-							components={COMPONENTS}
-							urlTransform={URL_TRANSFORM}
-						>
-							{content}
-						</ReactMarkdown>
+						<RemoteContent.Provider value={remote}>
+							<ReactMarkdown
+								remarkPlugins={singleDollarTextMath ? REMARK_PLUGINS : REMARK_PLUGINS_LITERAL_SINGLE_DOLLAR}
+								rehypePlugins={REHYPE_PLUGINS}
+								components={remote ? REMOTE_COMPONENTS : COMPONENTS}
+								urlTransform={URL_TRANSFORM}
+							>
+								{content}
+							</ReactMarkdown>
+						</RemoteContent.Provider>
 					</MarkdownSourcePath.Provider>
 				</CodeLineNumbersOverride.Provider>
 			</StreamingContent.Provider>

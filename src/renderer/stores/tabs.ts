@@ -21,6 +21,7 @@ import type {
 	IpcSpawnTabResult,
 	IpcTabStatusPayload,
 	IpcTabWorktree,
+	RemoteTabTarget,
 	SessionInfo,
 	SessionKind,
 	TabStatus,
@@ -68,6 +69,10 @@ export interface SessionTab {
 	backgroundCompacting?: boolean;
 	/** Immutable session kind, fixed when this tab's sidecar was spawned. */
 	kind: SessionKind;
+	/** SSH origin when this tab attaches to a remote omp instance; absent on
+	 * local tabs. Immutable identity: a profile edit must never silently
+	 * re-point a live tab at another host. */
+	remote?: RemoteTabTarget;
 	/** Untargeted startup tab that may be replaced while still truly empty. */
 	placeholder?: boolean;
 	/**
@@ -273,11 +278,18 @@ export function tabChipLabel(tab: SessionTab, tabs: readonly SessionTab[]): stri
 	// fall through like null. Worktree tabs label by their worktree NAME — the
 	// cwd basename is the hash-suffixed dir (gui-<name>-<hash7>), unreadable.
 	// Untitled chats are global: their internal process cwd must never masquerade
-	// as a selected workspace in the tab strip.
-	const untitledBase = (entry: SessionTab) =>
-		entry.kind === "chat"
+	// as a selected workspace in the tab strip. Remote tabs carry their host
+	// identity in the chip: workspace · target (the local cwd is only a launch
+	// dir and would read as a local workspace).
+	const untitledBase = (entry: SessionTab) => {
+		if (entry.remote) {
+			const workspace = basename(entry.remote.workspace);
+			return workspace ? `${workspace} · ${entry.remote.target}` : entry.remote.target;
+		}
+		return entry.kind === "chat"
 			? translate("sidebar.newSession")
 			: entry.worktree?.name || basename(entry.cwd) || translate("sidebar.newSession");
+	};
 	const base = tab.title || untitledBase(tab);
 	if (tab.title) return base;
 	let occurrence = 0;
@@ -317,6 +329,22 @@ export function activeTabKind(): SessionKind {
 
 function tabKindOf(state: Pick<TabsStore, "tabs" | "activeTabId">, tabId: string | null): SessionKind {
 	return state.tabs.find(tab => tab.id === (tabId ?? state.activeTabId))?.kind ?? "agent";
+}
+
+/**
+ * THE central gate for the local/remote split. A remote tab's state lives on
+ * the SSH instance: no local sidecar ever serves it, so every local hydration
+ * (GET_STATE/transcript restore) and subagent-subscription request must skip
+ * it. Call sites that hold store state pass it in; imperative callers use
+ * {@link isRemoteTabId}.
+ */
+export function isRemoteTab(state: Pick<TabsStore, "tabs">, tabId: string | null | undefined): boolean {
+	return state.tabs.find(tab => tab.id === tabId)?.remote !== undefined;
+}
+
+/** Non-hook read for imperative callers (event plumbing, boot fallbacks). */
+export function isRemoteTabId(tabId: string | null | undefined): boolean {
+	return isRemoteTab(useTabsStore.getState(), tabId);
 }
 
 export interface TabsStore {
@@ -426,7 +454,7 @@ export const useTabsStore = create<TabsStore>()((set, get) => {
 			toast({ variant: "error", title: translate("tabs.switchFailed"), message: String(error) });
 			const converged = await get().reconcileTabs();
 			if (version !== switchVersion) return;
-			if (converged && get().activeTabId === id) await hydrateTabSession(id);
+			if (converged && get().activeTabId === id && !isRemoteTab(get(), id)) await hydrateTabSession(id);
 			return;
 		}
 		if (version !== switchVersion) return;
@@ -436,8 +464,11 @@ export const useTabsStore = create<TabsStore>()((set, get) => {
 		// ready event will replay after routing, so hydrate from the tab's latest
 		// status here — the newly focused tab, and a partner that just came on
 		// screen beside it. A still-starting sidecar will deliver its normal full
-		// ready event after the route is attached.
-		const hydrate = visible.filter(tabId => (focusChanged && tabId === id) || !previouslyVisible.includes(tabId));
+		// ready event after the route is attached. Remote tabs never hydrate
+		// locally: their pane syncs the SSH instance itself.
+		const hydrate = visible.filter(
+			tabId => !isRemoteTab(get(), tabId) && ((focusChanged && tabId === id) || !previouslyVisible.includes(tabId)),
+		);
 		await Promise.all(
 			hydrate.map(async tabId => {
 				const routedTab = get().tabs.find(tab => tab.id === tabId);
@@ -485,6 +516,8 @@ export const useTabsStore = create<TabsStore>()((set, get) => {
 						compacting: info.compacting ?? existing?.compacting ?? false,
 						backgroundCompacting: info.backgroundCompacting ?? existing?.backgroundCompacting ?? false,
 						kind: info.kind ?? existing?.kind ?? "agent",
+						// Immutable once seen: keep the identity the tab was opened with.
+						remote: existing?.remote ?? info.remote,
 						placeholder: info.placeholder ?? existing?.placeholder,
 						worktree: info.worktree ?? existing?.worktree,
 						title:
@@ -796,6 +829,8 @@ export const useTabsStore = create<TabsStore>()((set, get) => {
 					compacting: payload.compacting ?? previous?.compacting ?? false,
 					backgroundCompacting: payload.backgroundCompacting ?? previous?.backgroundCompacting ?? false,
 					kind: payload.kind ?? previous?.kind ?? "agent",
+					// Immutable once seen: keep the identity the tab was opened with.
+					remote: previous?.remote ?? payload.remote,
 					placeholder: payload.placeholder ?? previous?.placeholder,
 					worktree: payload.worktree ?? previous?.worktree,
 					title:
@@ -835,7 +870,11 @@ export const useTabsStore = create<TabsStore>()((set, get) => {
 				}
 			}
 			const session = sessionRuntimeStore<SessionStore>(payload.tabId, "session");
-			if (sessionChanged && (payload.status === "ready" || payload.status === "running")) {
+			if (
+				sessionChanged &&
+				(payload.status === "ready" || payload.status === "running") &&
+				!isRemoteTabId(payload.tabId)
+			) {
 				void hydrateTabSession(payload.tabId);
 			}
 			if (session) {
@@ -1019,7 +1058,8 @@ export function useSessionTabs(): void {
 					for (const tabId of visibleTabIds(state)) {
 						const tab = state.tabs.find(entry => entry.id === tabId);
 						const session = sessionRuntimeStore<SessionStore>(tabId, "session");
-						if (!tab || !session || (tab.status !== "ready" && tab.status !== "running")) continue;
+						// Remote tabs sync their instance from their own pane.
+						if (!tab || !session || tab.remote || (tab.status !== "ready" && tab.status !== "running")) continue;
 						session.getState().setStatus("ready", tab.cwd);
 						void hydrateTabSession(tabId);
 					}
@@ -1034,17 +1074,19 @@ export function useSessionTabs(): void {
 			const state = useTabsStore.getState();
 			const tab = state.tabs.find(entry => entry.id === payload.tabId);
 			const visible = visibleTabIds(state).includes(payload.tabId);
-			// Every ready tab streams its subagent frames: the sidebar lists the
-			// agents of background tabs too (plan/24 §7). Idempotent server-side.
-			// A background tab needs a tab-addressed command; the active-tab
-			// fallback would land on the wrong sidecar.
-			if (visible || typeof window.omp.rpc.commandForTab === "function") {
+			// Every ready local tab streams its subagent frames: the sidebar lists
+			// the agents of background tabs too (plan/24 §7). Idempotent
+			// server-side. A background tab needs a tab-addressed command; the
+			// active-tab fallback would land on the wrong sidecar. Remote tabs
+			// have no local sidecar to subscribe — their frames ride the remote
+			// event stream.
+			if (!tab?.remote && (visible || typeof window.omp.rpc.commandForTab === "function")) {
 				void ensureTabRuntime(payload.tabId).command({
 					type: "set_subagent_subscription",
 					level: SUBAGENT_SUBSCRIPTION_LEVEL,
 				});
 			}
-			if (visible) {
+			if (visible && !tab?.remote) {
 				if (!tab?.pendingSessionPath && previousStatus !== "ready" && previousStatus !== "running") {
 					// Light TAB_STATUS is registered before the full active-tab channel.
 					// If ready raced SET_ACTIVE_TAB, the full ready event was already

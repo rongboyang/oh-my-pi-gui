@@ -1,4 +1,5 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
 import type { Readable } from "node:stream";
 import {
 	parseRemoteInstanceList,
@@ -67,7 +68,12 @@ interface RunningSsh {
 	connected(): void;
 }
 
-async function startSsh(target: string, command: readonly string[], options: RemoteSshOptions): Promise<RunningSsh> {
+async function startSsh(
+	target: string,
+	command: readonly string[],
+	options: RemoteSshOptions,
+	controlPath?: string,
+): Promise<RunningSsh> {
 	validateTarget(target);
 	if (options.signal?.aborted) throw new RemoteSshError("auth_cancelled");
 	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -79,7 +85,9 @@ async function startSsh(target: string, command: readonly string[], options: Rem
 		forced ??= code;
 		child?.kill();
 	};
-	const askpass = await createRemoteAskpass(options.askpass, () => stop("auth_cancelled"));
+	const askpass = await createRemoteAskpass(options.askpass, error =>
+		stop(error instanceof RemoteSshError ? error.code : "auth_cancelled"),
+	);
 	if (options.signal?.aborted) {
 		await askpass.close();
 		throw new RemoteSshError("auth_cancelled");
@@ -90,19 +98,23 @@ async function startSsh(target: string, command: readonly string[], options: Rem
 			[
 				"-T",
 				"-a",
+				"-x",
 				"-o",
 				"ForwardAgent=no",
 				"-o",
-				"ControlMaster=no",
+				"ClearAllForwardings=yes",
 				"-o",
-				"ControlPath=none",
+				"PermitLocalCommand=no",
+				...(controlPath
+					? ["-o", "ControlMaster=auto", "-o", "ControlPersist=90", "-S", controlPath]
+					: ["-o", "ControlMaster=no", "-o", "ControlPath=none"]),
 				"--",
 				target,
 				...command,
 			],
 			{
 				stdio: ["pipe", "pipe", "pipe"],
-				env: { ...process.env, ...askpass.env },
+				env: { ...process.env, ...askpass.env, LC_ALL: "C" },
 			},
 		);
 	} catch {
@@ -152,8 +164,9 @@ async function startSsh(target: string, command: readonly string[], options: Rem
 export async function discoverRemoteInstances(
 	target: string,
 	options: RemoteSshOptions,
+	controlPath?: string,
 ): Promise<readonly RemoteInstance[]> {
-	const ssh = await startSsh(target, ["omp", "remote", "list", "--json"], options);
+	const ssh = await startSsh(target, ["omp", "remote", "list", "--json"], options, controlPath);
 	const chunks: Buffer[] = [];
 	let size = 0;
 	let overflow = false;
@@ -183,9 +196,15 @@ export async function dialRemoteInstance(
 	target: string,
 	instance: RemoteInstance,
 	options: RemoteSshOptions,
+	controlPath?: string,
 ): Promise<RemoteSshStream> {
 	if (!/^[0-9a-f]{64}$/.test(instance.instanceKey)) throw new RemoteSshError("invalid_request");
-	const ssh = await startSsh(target, ["omp", "remote", "attach", "--instance", instance.instanceKey], options);
+	const ssh = await startSsh(
+		target,
+		["omp", "remote", "attach", "--instance", instance.instanceKey],
+		options,
+		controlPath,
+	);
 	ssh.child.stdout.once("readable", ssh.connected);
 	return {
 		stdout: ssh.child.stdout,
@@ -202,6 +221,47 @@ export async function dialRemoteInstance(
 			if (!ssh.child.stdin.writable) throw new RemoteSshError("disconnected");
 			ssh.child.stdin.write(bytes);
 		},
+	};
+}
+
+export interface RemoteSshAttempt {
+	discover(options: RemoteSshOptions): Promise<readonly RemoteInstance[]>;
+	dial(instance: RemoteInstance, options: RemoteSshOptions): Promise<RemoteSshStream>;
+	close(): Promise<void>;
+}
+
+/** One UI attempt's authenticated SSH connection, never the user's preexisting master. */
+export async function createRemoteSshAttempt(target: string): Promise<RemoteSshAttempt> {
+	validateTarget(target);
+	const directory = await mkdtemp("/tmp/omp-mux-");
+	const socket = `${directory}/s`;
+	const abort = new AbortController();
+	let cleanup: Promise<void> | undefined;
+	function bind(options: RemoteSshOptions): RemoteSshOptions {
+		return {
+			...options,
+			signal: options.signal ? AbortSignal.any([abort.signal, options.signal]) : abort.signal,
+		};
+	}
+	async function close(): Promise<void> {
+		abort.abort();
+		try {
+			const exit = Promise.withResolvers<void>();
+			const child = spawn("/usr/bin/ssh", ["-S", socket, "-O", "exit", "--", target], {
+				stdio: "ignore",
+				timeout: 3_000,
+			});
+			child.once("error", () => exit.resolve());
+			child.once("close", () => exit.resolve());
+			await exit.promise;
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	}
+	return {
+		discover: options => discoverRemoteInstances(target, bind(options), socket),
+		dial: (instance, options) => dialRemoteInstance(target, instance, bind(options), socket),
+		close: () => (cleanup ??= close()),
 	};
 }
 

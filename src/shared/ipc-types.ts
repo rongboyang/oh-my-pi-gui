@@ -10,6 +10,7 @@ import type { LaunchProfile } from "./launch-profile";
 import type { SessionModelOverride } from "./model-restore";
 import type { PluginEffects } from "./plugin-effects";
 import type { DroppedProxy } from "./proxy";
+import type { RemoteApi } from "./remote-ipc";
 import type {
 	AgentSessionEvent,
 	AvailableCommand,
@@ -146,6 +147,9 @@ export const IPC_EVENTS = {
 	BROWSER_STATE: "browser:state",
 	/** A key the focused built-in browser page handed to the app (IpcBrowserKeyPayload). */
 	BROWSER_KEY: "browser:key",
+	REMOTE_TAB: "remote:tab",
+	REMOTE_AUTH: "remote:auth",
+	REMOTE_AUTH_CLOSED: "remote:auth-closed",
 } as const;
 
 // ============================================================================
@@ -324,6 +328,18 @@ export const IPC_COMMANDS = {
 	BROWSER_CAPTURE: "browser:capture",
 	/** The app keymap's chords, so a focused page hands them to the app instead of keeping them. */
 	BROWSER_SET_SHORTCUTS: "browser:set-shortcuts",
+	REMOTE_PROFILES: "remote:profiles",
+	REMOTE_DISCOVER: "remote:discover",
+	REMOTE_CANCEL_DISCOVERY: "remote:cancel-discovery",
+	REMOTE_CONNECT: "remote:connect",
+	REMOTE_RECONNECT: "remote:reconnect",
+	REMOTE_DISCONNECT: "remote:disconnect",
+	REMOTE_SYNC: "remote:sync",
+	REMOTE_SESSIONS: "remote:sessions",
+	REMOTE_HISTORY: "remote:history",
+	REMOTE_OUTPUT: "remote:output",
+	REMOTE_ACTION: "remote:action",
+	REMOTE_ANSWER_AUTH: "remote:answer-auth",
 } as const;
 
 export type RuntimeErrorSource =
@@ -1316,6 +1332,7 @@ export interface CaptionColors {
 export interface OmpApi {
 	/** `process.platform`: which window controls sit over the header. */
 	platform: string;
+	remote: RemoteApi;
 	windowChrome: {
 		isFullScreen(): Promise<boolean>;
 		onFullScreenChange(callback: (fullScreen: boolean) => void): () => void;

@@ -151,6 +151,25 @@ const api: OmpApi = {
 		logSnapshot: () => ipcRenderer.invoke(IPC_COMMANDS.LOG_SNAPSHOT) as Promise<LogBatch>,
 		logTail: (maxLines: number) => ipcRenderer.invoke(IPC_COMMANDS.RUNTIME_LOG_TAIL, maxLines) as Promise<string[]>,
 	},
+	remote: {
+		profiles: () => ipcRenderer.invoke(IPC_COMMANDS.REMOTE_PROFILES),
+		discover: (target, attemptId) => ipcRenderer.invoke(IPC_COMMANDS.REMOTE_DISCOVER, target, attemptId),
+		cancelDiscovery: attemptId => ipcRenderer.invoke(IPC_COMMANDS.REMOTE_CANCEL_DISCOVERY, attemptId),
+		connect: (attemptId, instanceKey) => ipcRenderer.invoke(IPC_COMMANDS.REMOTE_CONNECT, attemptId, instanceKey),
+		reconnect: tabId => ipcRenderer.invoke(IPC_COMMANDS.REMOTE_RECONNECT, tabId),
+		disconnect: tabId => ipcRenderer.invoke(IPC_COMMANDS.REMOTE_DISCONNECT, tabId),
+		sync: tabId => ipcRenderer.invoke(IPC_COMMANDS.REMOTE_SYNC, tabId),
+		sessions: (tabId, cursor) => ipcRenderer.invoke(IPC_COMMANDS.REMOTE_SESSIONS, tabId, cursor),
+		history: (tabId, view, cursor) => ipcRenderer.invoke(IPC_COMMANDS.REMOTE_HISTORY, tabId, view, cursor),
+		output: (tabId, view, outputId, cursor) =>
+			ipcRenderer.invoke(IPC_COMMANDS.REMOTE_OUTPUT, tabId, view, outputId, cursor),
+		action: (tabId, scope, command) => ipcRenderer.invoke(IPC_COMMANDS.REMOTE_ACTION, tabId, scope, command),
+		answerAuth: (attemptId, promptId, answer) =>
+			ipcRenderer.invoke(IPC_COMMANDS.REMOTE_ANSWER_AUTH, attemptId, promptId, answer),
+		onEvent: callback => subscribe(IPC_EVENTS.REMOTE_TAB, callback),
+		onAuth: callback => subscribe(IPC_EVENTS.REMOTE_AUTH, callback),
+		onAuthClosed: callback => subscribe(IPC_EVENTS.REMOTE_AUTH_CLOSED, callback),
+	},
 	// Fire-and-forget: the guard may show a modal, and the renderer has nothing
 	// to learn from the outcome.
 	app: {

@@ -47,6 +47,7 @@ import { TabBar } from "./components/layout/TabBar";
 import { TitleBar } from "./components/layout/TitleBar";
 import { UpdateBanner } from "./components/layout/UpdateBanner";
 import { connectFileDraftGuard } from "./components/panels/WorkspaceFileEditor";
+import { RemoteAuthDialog, RemoteConnect } from "./components/remote/RemoteConnect";
 import { useAwaitingConfirmation } from "./hooks/use-awaiting-confirmation";
 import { useExtensionUi } from "./hooks/use-extension-ui";
 import { useLearnedSkillsSync } from "./hooks/use-learned-skills";
@@ -230,6 +231,9 @@ export function App() {
 	const closeProviderConfig = useUiStore(s => s.closeProviderConfig);
 	const activeTabId = useTabsStore(s => s.activeTabId);
 	const activeTabStatus = useTabsStore(s => s.tabs.find(tab => tab.id === s.activeTabId)?.status);
+	// A focused remote tab is served over SSH: local panels and the focused
+	// session's sidecar-scoped effects must not mount around it.
+	const activeTabRemote = useTabsStore(s => s.tabs.find(tab => tab.id === s.activeTabId)?.remote !== undefined);
 	const themeSidecarReady = activeTabStatus === "ready" || activeTabStatus === "running";
 	const { lang, setLang } = useLang();
 	const t = useT();
@@ -886,16 +890,21 @@ export function App() {
 			data-inspector={panelVisible && !workspace ? "open" : "closed"}
 			data-sidebar={sidebarVisible ? "open" : "closed"}
 		>
-			{focusedRuntime && <FocusedSessionEffects />}
+			{focusedRuntime && !activeTabRemote && <FocusedSessionEffects />}
 			{sidebarVisible && <Sidebar />}
 
 			<main className="omp-workspace-main relative flex min-w-0 flex-1 flex-col">
 				<div className={workspace ? "hidden" : "flex min-h-0 flex-1 flex-col"}>
 					<TitleBar />
 					<TabBar />
+					<RemoteConnect />
 					<div className="shrink-0" data-toast-clearance>
-						<SidecarBanner />
-						<ConfigWarningsBanner />
+						{!activeTabRemote && (
+							<>
+								<SidecarBanner />
+								<ConfigWarningsBanner />
+							</>
+						)}
 						<UpdateBanner />
 					</div>
 					<SplitWorkspace />
@@ -919,7 +928,7 @@ export function App() {
 				)}
 			</main>
 
-			{panelVisible && !workspace && <PanelContainer />}
+			{panelVisible && !workspace && !activeTabRemote && <PanelContainer />}
 
 			<CommandPalette />
 			<ExtensionDialog />
@@ -957,6 +966,8 @@ export function App() {
 			{importDialogOpen && <ImportForeignDialog />}
 			{composerEditorOpen && <ComposerEditorDialog />}
 			<Suspense fallback={null}>{feedbackOpen && <FeedbackDialog />}</Suspense>
+			{/* App-scope so restored/manual reconnects can ask after the connect dialog closed. */}
+			<RemoteAuthDialog />
 			<ToastStack />
 			<AgentHoverCardLayer />
 		</div>

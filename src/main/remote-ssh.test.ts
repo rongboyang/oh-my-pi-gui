@@ -4,7 +4,13 @@ import { promises as fs } from "node:fs";
 import { connect } from "node:net";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRemoteAskpass } from "./remote-askpass";
-import { dialRemoteInstance, discoverRemoteInstances, RemoteReconnect, RemoteSshError } from "./remote-ssh";
+import {
+	createRemoteSshAttempt,
+	dialRemoteInstance,
+	discoverRemoteInstances,
+	RemoteReconnect,
+	RemoteSshError,
+} from "./remote-ssh";
 
 const fake = vi.hoisted(() => ({
 	script: "",
@@ -16,7 +22,9 @@ vi.mock("node:child_process", async importOriginal => {
 		...original,
 		spawn(executable: string, args: string[], options: { env: Record<string, string> }) {
 			fake.calls.push({ executable, args, env: options.env });
-			return original.spawn(process.execPath, ["-e", fake.script], { stdio: ["pipe", "pipe", "pipe"] });
+			return original.spawn(process.execPath, ["-e", args.includes("-O") ? "" : fake.script], {
+				stdio: ["pipe", "pipe", "pipe"],
+			});
 		},
 	};
 });
@@ -41,8 +49,13 @@ it("executes only the fixed list command with isolated SSH options and parses di
 	expect(fake.calls[0].args).toEqual([
 		"-T",
 		"-a",
+		"-x",
 		"-o",
 		"ForwardAgent=no",
+		"-o",
+		"ClearAllForwardings=yes",
+		"-o",
+		"PermitLocalCommand=no",
 		"-o",
 		"ControlMaster=no",
 		"-o",
@@ -76,6 +89,30 @@ it("preserves attach bytes and completes after explicit close", async () => {
 	expect(bytes.toString()).toBe("hello\n");
 	stream.close();
 	await expect(stream.completion).resolves.toBeUndefined();
+});
+
+it("reuses only the authentication socket from the selected attempt and exits that master", async () => {
+	const attempt = await createRemoteSshAttempt("user@host");
+	try {
+		fake.script = `process.stdout.write(${JSON.stringify(JSON.stringify([instance]))})`;
+		await expect(attempt.discover(options)).resolves.toEqual([instance]);
+		fake.script = 'process.stdin.on("data", b => process.stdout.write(b))';
+		const stream = await attempt.dial(instance, options);
+		stream.send(new TextEncoder().encode("test\n"));
+		await once(stream.stdout, "data");
+		const [discover, attach] = fake.calls;
+		const socket = discover.args[discover.args.indexOf("-S") + 1];
+		expect(attach.args[attach.args.indexOf("-S") + 1]).toBe(socket);
+		const directory = socket.slice(0, socket.lastIndexOf("/"));
+		expect((await fs.stat(directory)).mode & 0o777).toBe(0o700);
+		await attempt.close();
+		await expect(stream.completion).rejects.toMatchObject({ code: "auth_cancelled" });
+		expect(fake.calls[2].args).toEqual(["-S", socket, "-O", "exit", "--", "user@host"]);
+		await expect(fs.stat(directory)).rejects.toMatchObject({ code: "ENOENT" });
+		await expect(attempt.discover(options)).rejects.toMatchObject({ code: "auth_cancelled" });
+	} finally {
+		await attempt.close();
+	}
 });
 
 it.each([

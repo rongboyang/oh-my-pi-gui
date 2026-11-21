@@ -8,12 +8,12 @@ export interface RemoteAskpassPrompt {
 	confirm: boolean;
 }
 
-export type RemoteAskpassCallback = (prompt: RemoteAskpassPrompt) => Promise<string | null>;
+export type RemoteAskpassCallback = (prompt: RemoteAskpassPrompt, signal: AbortSignal) => Promise<string | null>;
 
 /** A private, attempt-scoped askpass endpoint. No Electron or Node executable is needed by ssh. */
 export async function createRemoteAskpass(
 	askpass: RemoteAskpassCallback,
-	cancel: () => void,
+	cancel: (error?: unknown) => void,
 ): Promise<{
 	env: Record<string, string>;
 	close(): Promise<void>;
@@ -23,6 +23,7 @@ export async function createRemoteAskpass(
 	const helper = path.join(dir, "askpass");
 	const token = randomBytes(32).toString("hex");
 	const sockets = new Set<Socket>();
+	const lifetime = new AbortController();
 	let closed = false;
 	const server = createServer({ allowHalfOpen: true }, socket => {
 		sockets.add(socket);
@@ -46,9 +47,14 @@ export async function createRemoteAskpass(
 				return;
 			}
 			const prompt = Buffer.from(fields[2], "base64").toString("utf8");
-			const confirm = fields[1] === "confirm";
+			// OpenSSH on macOS does not set SSH_ASKPASS_PROMPT for host trust.
+			// LC_ALL=C on the child makes the match independent of GUI language.
+			const confirm =
+				fields[1] === "confirm" ||
+				(/^The authenticity of host '[^\n]+' can't be established\./.test(prompt) &&
+					/Are you sure you want to continue connecting \(yes\/no(?:\/\[fingerprint\])?\)\?\s*$/.test(prompt));
 			void Promise.resolve()
-				.then(() => askpass({ prompt, confirm }))
+				.then(() => askpass({ prompt, confirm }, lifetime.signal))
 				.then(
 					answer => {
 						if (closed || socket.destroyed) return;
@@ -59,9 +65,9 @@ export async function createRemoteAskpass(
 						}
 						socket.end(`${answer}\n`);
 					},
-					() => {
+					error => {
 						socket.destroy();
-						if (!closed) cancel();
+						if (!closed) cancel(error);
 					},
 				);
 		});
@@ -97,6 +103,7 @@ export async function createRemoteAskpass(
 		async close() {
 			if (closed) return;
 			closed = true;
+			lifetime.abort();
 			for (const socket of sockets) socket.destroy();
 			const stopped = Promise.withResolvers<void>();
 			server.close(() => stopped.resolve());

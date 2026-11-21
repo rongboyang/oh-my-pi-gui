@@ -11,10 +11,10 @@ import { describe, expect, it } from "vitest";
 import { I18nProvider } from "./i18n";
 import { MarkdownRenderer } from "./markdown";
 
-function render(content: string): string {
+function render(content: string, remote = false): string {
 	return renderToStaticMarkup(
 		<I18nProvider>
-			<MarkdownRenderer content={content} />
+			<MarkdownRenderer content={content} remote={remote} />
 		</I18nProvider>,
 	);
 }
@@ -43,5 +43,16 @@ describe("markdown sanitize class lockdown", () => {
 	it("still renders raw HTML content after attribute stripping", () => {
 		const html = render('<mark class="bg-red-500">kept</mark>');
 		expect(html).toContain("kept");
+	});
+
+	it("displays remote markdown text without client file or resource links", () => {
+		const html = render(
+			"`src/local.md` [project](file:///tmp/client/project.md) ![image caption](https://example.test/pixel) <script>externalCode()</script>",
+			true,
+		);
+		expect(html).toContain("src/local.md");
+		expect(html).toContain("project");
+		expect(html).toContain("image caption");
+		expect(html).not.toMatch(/<a\b|<img\b|client\/project\.md|example\.test|externalCode/);
 	});
 });

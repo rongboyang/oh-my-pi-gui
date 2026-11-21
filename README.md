@@ -211,6 +211,16 @@ Windows packages are currently unsigned. Windows SmartScreen may require **More 
 4. **Go parallel:** `⌥T` creates a fresh worktree tab. Use the tab context menu or drag a tab into the workspace for a two-pane split.
 5. **Find and revisit:** `⌘K` opens commands; `⌘P` searches session history.
 
+### Work on a remote host over SSH (macOS)
+
+This feature requires a GUI and a remote Core build that support `omp remote`. It attaches to an agent already running on another Mac; the remote host owns the workspace, model credentials, tools, and session history.
+
+1. On the remote host, open the project and run `omp remote serve --name my-project`. Leave that process running.
+2. On the client, verify the SSH target with `ssh my-host omp remote list --json`. The `omp` executable must be in the remote account’s **non-interactive** `PATH`. An alias or function defined only in an interactive shell is not enough.
+3. In the GUI, choose **Connect to remote omp**, enter the SSH alias, then choose the instance if more than one is running. For a new SSH host, verify the fingerprint with the remote host before accepting it.
+
+Closing the GUI or clicking **Disconnect** does not stop remote work. Reconnect to see the same session, including tool output and unanswered approvals. **Stop remote task** explicitly stops the current run. If the remote instance itself exits, the GUI will not start it or replay your message; restart it on the remote host and reopen a saved session.
+
 <a id="en-shortcuts"></a>
 ### Keyboard shortcuts
 
@@ -579,6 +589,16 @@ Windows 包当前未签名。首次启动前请确认下载来源；Windows Smar
 3. **开始对话：**输入请求。需要新会话时使用 `⌘N`，执行过程中检查工具调用并处理审批。
 4. **并行推进：**`⌥T` 新建 worktree 标签页；使用标签右键菜单，或把标签拖入工作区，打开双面板分屏。
 5. **查找与回顾：**`⌘K` 浏览命令，`⌘P` 搜索会话历史。
+
+### 通过 SSH 在远端主机工作（macOS）
+
+此功能需要客户端 GUI 和远端 Core 均支持 `omp remote`。GUI 接入另一台 Mac 上已经运行的代理。工作区、模型凭据、工具和会话记录都由远端主机管理。
+
+1. 在远端主机进入项目目录，运行 `omp remote serve --name my-project`，并保持进程运行。
+2. 在客户端运行 `ssh my-host omp remote list --json` 检查 SSH 目标。远端账号的**非交互** `PATH` 必须找到 `omp` 可执行文件；只在交互式 shell 中定义的别名或函数不够。
+3. 在 GUI 中选择**连接远端 omp**并输入 SSH 别名。如果远端有多个实例，请选择要接入的实例。首次连接 SSH 主机时，请先与远端主机核对指纹再信任。
+
+关闭 GUI 或点击**断开连接**都不会停止远端任务。重新连接后可查看同一会话，包括工具输出和尚未处理的审批。只有点击**停止远端任务**才会停止当前任务。如果远端实例本身已退出，GUI 不会代为启动或重发消息；请在远端主机重启实例后打开已保存的会话。
 
 <a id="zh-shortcuts"></a>
 ### 快捷键

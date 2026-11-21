@@ -23,6 +23,8 @@ import { LogWatcher } from "./log-watcher";
 import { MemoryWatcher } from "./memory-watcher";
 import { createMenu } from "./menu";
 import { dropUnsupportedProxies, type ProxyResolution, resolveProxyForSpawn } from "./proxy-env";
+import { registerRemoteIpc } from "./remote-ipc";
+import { RemoteJournal } from "./remote-journal";
 import { writeRuntimeLog } from "./runtime-log";
 import { SchedulerHost } from "./scheduler/host";
 import { SessionIndex } from "./session-index";
@@ -429,6 +431,20 @@ app.whenReady().then(() => {
 		spawnWindow,
 		initialCwd: resolveInitialCwd,
 		schedulerHost,
+	});
+	const remotePreferences = new Store<Record<string, unknown>>({ name: "remote-connections" });
+	const journal = new RemoteJournal(
+		() => remotePreferences.get("receiptIds"),
+		rows => remotePreferences.set("receiptIds", rows),
+	);
+	registerRemoteIpc(sidecarPool, windowManager, journal, {
+		readProfiles: () => remotePreferences.get("profiles"),
+		writeProfiles: rows => remotePreferences.set("profiles", rows),
+		readEpoch: key => {
+			const value = remotePreferences.get(`epochs.${key}`);
+			return typeof value === "string" ? value : undefined;
+		},
+		writeEpoch: (key, epoch) => remotePreferences.set(`epochs.${key}`, epoch),
 	});
 	schedulerHost?.start();
 
